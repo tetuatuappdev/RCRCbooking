@@ -22,12 +22,8 @@ type Booking = {
   member_id: string | null
   start_time: string
   end_time: string
-  boats?: {
-    name: string
-  } | null
-  members?: {
-    name: string
-  } | null
+  boats?: { name: string }[] | null
+  members?: { name: string }[] | null
 }
 
 const getTodayString = () => {
@@ -406,17 +402,21 @@ function App() {
                       {items.length === 0 ? (
                         <span className="slot-empty">Free</span>
                       ) : (
-                        items.map((booking) => (
-                          <div key={booking.id} className="booking-pill">
-                            <div>
-                              <strong>{booking.boats?.name ?? 'Boat'}</strong>
-                              <span>{booking.members?.name ?? 'Member'}</span>
+                        items.map((booking) => {
+                          const boatName = booking.boats?.[0]?.name ?? 'Boat'
+                          const memberName = booking.members?.[0]?.name ?? 'Member'
+                          return (
+                            <div key={booking.id} className="booking-pill">
+                              <div>
+                                <strong>{boatName}</strong>
+                                <span>{memberName}</span>
+                              </div>
+                              <span className="booking-time">
+                                {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
+                              </span>
                             </div>
-                            <span className="booking-time">
-                              {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
-                            </span>
-                          </div>
-                        ))
+                          )
+                        })
                       )}
                     </div>
                   </div>
