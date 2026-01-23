@@ -27,6 +27,12 @@ body {
   min-height: 100vh;
   background: radial-gradient(circle at top, #fff7ed 0%, #f8fafc 40%, #e2e8f0 100%);
   color: var(--ink-1);
+  overflow-x: hidden;
+}
+
+html,
+body {
+  width: 100%;
 }
 
 #root {
@@ -36,7 +42,10 @@ body {
 .app {
   position: relative;
   min-height: 100vh;
-  padding: 48px clamp(20px, 5vw, 72px) 80px;
+  padding: 12px clamp(16px, 4vw, 56px) 48px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
   isolation: isolate;
 }
 
@@ -70,13 +79,14 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 32px;
-  margin-bottom: 40px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.2em;
-  font-size: 0.75rem;
+  font-size: 1.2rem;
   font-weight: 600;
   color: var(--ink-3);
 }
@@ -104,6 +114,15 @@ body {
   box-shadow: var(--shadow);
 }
 
+.top-signout {
+  display: inline-flex;
+  align-items: center;
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 1000;
+}
+
 .user-label {
   margin: 0;
   font-size: 0.75rem;
@@ -129,6 +148,7 @@ body {
   padding: 28px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
+  width: 100%;
 }
 
 .panel-header {
@@ -137,6 +157,7 @@ body {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .panel-header h2 {
@@ -157,7 +178,7 @@ body {
 .form-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
 }
 
 .field {
@@ -198,7 +219,7 @@ select:focus {
 }
 
 .field.compact {
-  min-width: 180px;
+  min-width: 0;
 }
 
 .button {
@@ -209,6 +230,7 @@ select:focus {
   cursor: pointer;
   font-size: 0.95rem;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  max-width: 100%;
 }
 
 .button.primary {
@@ -227,9 +249,45 @@ select:focus {
   border: 1px solid var(--stroke);
 }
 
+.button.small {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+
+.button.ghost.danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #b91c1c;
+}
+
 .button:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  color: #1f2937;
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 600;
+  box-shadow: 0 14px 28px rgba(249, 115, 22, 0.3);
+  cursor: pointer;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+.fab:hover {
+  transform: translateY(-2px);
 }
 
 .schedule {
@@ -239,7 +297,7 @@ select:focus {
 
 .schedule-row {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: minmax(72px, 110px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
   padding: 12px;
@@ -257,6 +315,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .slot-empty {
@@ -265,15 +324,26 @@ select:focus {
 }
 
 .booking-pill {
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  border: 1px solid rgba(251, 146, 60, 0.25);
+  background: white;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
   border-radius: 14px;
-  background: white;
-  border: 1px solid rgba(251, 146, 60, 0.25);
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.booking-pill:hover {
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
 }
 
 .booking-pill strong {

@@ -30,11 +30,17 @@ create table if not exists bookings (
   constraint end_after_start check (end_time > start_time)
 );
 
+create table if not exists admins (
+  member_id uuid primary key references members(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists bookings_boat_time_idx on bookings (boat_id, start_time, end_time);
 
 alter table members enable row level security;
 alter table boats enable row level security;
 alter table bookings enable row level security;
+alter table admins enable row level security;
 
 create policy "Members readable for login" on members
   for select to anon, authenticated
@@ -50,4 +56,43 @@ create policy "Bookings readable for authed" on bookings
 
 create policy "Bookings insert for authed" on bookings
   for insert to authenticated
-  with check (true);
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Bookings update for authed" on bookings
+  for update to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Bookings delete for authed" on bookings
+  for delete to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Admins self readable" on admins
+  for select to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+  );
