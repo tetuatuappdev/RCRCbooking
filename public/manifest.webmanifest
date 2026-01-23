@@ -1,0 +1,16 @@
+{
+  "name": "RCRC Boat Booking",
+  "short_name": "RCRC Booking",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f5f1",
+  "theme_color": "#f97316",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
