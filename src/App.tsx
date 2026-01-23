@@ -48,13 +48,6 @@ const formatTimeInput = (value: string) => {
   return `${hours}:${minutes}`
 }
 
-const formatDisplayDate = (value: string) =>
-  new Date(`${value}T12:00:00`).toLocaleDateString([], {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
-
 const toDateTime = (date: string, time: string) => new Date(`${date}T${time}:00`)
 const getRelatedName = (
   value: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null | undefined,
