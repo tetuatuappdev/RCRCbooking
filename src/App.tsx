@@ -237,7 +237,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!session?.user?.email) {
+    const sessionEmail = session?.user?.email
+    if (!sessionEmail) {
       setCurrentMember(null)
       setIsAdmin(false)
       setBookings([])
@@ -255,7 +256,7 @@ function App() {
       const { data, error } = await supabase
         .from('members')
         .select('id, name, email')
-        .ilike('email', session.user.email)
+        .ilike('email', sessionEmail)
         .maybeSingle()
 
       if (error) {
@@ -273,7 +274,7 @@ function App() {
       const { data: allowed, error: allowedError } = await supabase
         .from('allowed_member')
         .select('email, name, is_admin')
-        .ilike('email', session.user.email)
+        .ilike('email', sessionEmail)
         .maybeSingle()
 
       if (allowedError) {
@@ -303,7 +304,7 @@ function App() {
           const { data: existingMember, error: existingError } = await supabase
             .from('members')
             .select('id, name, email')
-            .ilike('email', session.user.email)
+            .ilike('email', sessionEmail)
             .maybeSingle()
           if (existingError) {
             setError(existingError.message)
