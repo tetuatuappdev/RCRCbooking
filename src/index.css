@@ -61,6 +61,32 @@ body {
   gap: 0px;
 }
 
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6000;
+  background: #0f172a;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 10px 16px;
+  font-weight: 600;
+}
+
+.update-banner button {
+  border: none;
+  background: white;
+  color: #0f172a;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .page-pad {
   padding-left: var(--app-pad);
   padding-right: var(--app-pad);
@@ -819,6 +845,16 @@ select:focus {
 
 .booking-pill:hover {
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.booking-pill:disabled {
+  opacity: 1;
+  color: var(--ink-1);
+  cursor: default;
+}
+
+.booking-pill:disabled span {
+  color: var(--ink-2);
 }
 
 .booking-pill.template {

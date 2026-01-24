@@ -194,6 +194,7 @@ function App() {
   const [isSendingEmail, setIsSendingEmail] = useState(false)
   const [isAuthBusy, setIsAuthBusy] = useState(false)
   const [isMemberLoading, setIsMemberLoading] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -204,6 +205,45 @@ function App() {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!__BUILD_ID__) {
+      return
+    }
+
+    let isActive = true
+
+    const checkForUpdate = async () => {
+      try {
+        const response = await fetch('/build-meta.json', { cache: 'no-store' })
+        if (!response.ok) {
+          return
+        }
+        const data = (await response.json()) as { buildId?: string }
+        if (isActive && data.buildId && data.buildId !== __BUILD_ID__) {
+          setUpdateAvailable(true)
+        }
+      } catch {
+        // Ignore update check errors.
+      }
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkForUpdate()
+      }
+    }
+
+    checkForUpdate()
+    const interval = window.setInterval(checkForUpdate, 60000)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      isActive = false
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
 
   useEffect(() => {
     if (!status) {
@@ -266,25 +306,6 @@ function App() {
 
     const loadCurrentMember = async () => {
       setIsMemberLoading(true)
-      const { data, error } = await supabase
-        .from('members')
-        .select('id, name, email')
-        .ilike('email', sessionEmail)
-        .maybeSingle()
-
-      if (error) {
-        setError(error.message)
-        setIsMemberLoading(false)
-        return
-      }
-
-      if (data) {
-        setCurrentMember(data)
-        fetchMembers()
-        setIsMemberLoading(false)
-        return
-      }
-
       const { data: allowed, error: allowedError } = await supabase
         .from('allowed_member')
         .select('email, name, is_admin')
@@ -300,6 +321,27 @@ function App() {
       if (!allowed) {
         setCurrentMember(null)
         setError('Your email is not authorized.')
+        await supabase.auth.signOut({ scope: 'local' })
+        setAuthView('signin')
+        setIsMemberLoading(false)
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('members')
+        .select('id, name, email')
+        .ilike('email', sessionEmail)
+        .maybeSingle()
+
+      if (error) {
+        setError(error.message)
+        setIsMemberLoading(false)
+        return
+      }
+
+      if (data) {
+        setCurrentMember(data)
+        fetchMembers()
         setIsMemberLoading(false)
         return
       }
@@ -1425,6 +1467,14 @@ function App() {
         }
       }}
     >
+      {updateAvailable ? (
+        <div className="update-banner">
+          <span>New version available</span>
+          <button type="button" onClick={() => window.location.reload()}>
+            Reload now
+          </button>
+        </div>
+      ) : null}
       {session ? (
         <div className="header-menu">
           <button
