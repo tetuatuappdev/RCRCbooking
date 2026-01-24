@@ -28,15 +28,19 @@ body {
   background: radial-gradient(circle at top, #fff7ed 0%, #f8fafc 40%, #e2e8f0 100%);
   color: var(--ink-1);
   overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 html,
 body {
   width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 #root {
   min-height: 100vh;
+  height: 100vh;
   width: 100%;
   overflow-x: hidden;
 }
@@ -44,13 +48,17 @@ body {
 .app {
   position: relative;
   min-height: 100vh;
+  height: 100vh;
   --app-pad: clamp(8px, 2vw, 24px);
-  padding: 8px 0 40px;
+  padding: 8px 0 0;
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
   isolation: isolate;
-  overflow-x: hidden;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0px;
 }
 
 .page-pad {
@@ -146,19 +154,106 @@ body {
 }
 
 .shell {
-  display: grid;
-  gap: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel {
   background: var(--surface-strong);
   border: 1px solid var(--stroke);
-  border-radius: 24px;
+  border-radius: 0;
   padding: 10px 5px 5px 5px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
   width: 100%;
   max-width: 100%;
+}
+
+.schedule-panel {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+}
+
+.gantt {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.gantt-scroll {
+  overflow: auto;
+  padding-bottom: 8px;
+  height: 100%;
+  display: flex;
+}
+
+.gantt-grid {
+  position: relative;
+  border-radius: 0;
+  border: none;
+  padding-top: 40px;
+  min-height: 100%;
+  flex: 1;
+}
+
+.gantt-verticals {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.gantt-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed rgba(100, 116, 139, 0.35);
+}
+
+.gantt-line.minor {
+  border-left: 2px solid rgba(148, 163, 184, 0.35);
+}
+
+.gantt-hours {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 28px;
+  align-items: center;
+  font-size: 0.95rem;
+  color: var(--ink-3);
+  font-weight: 700;
+  z-index: 2;
+}
+
+.gantt-hour {
+  position: absolute;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(-50%);
+}
+
+.gantt-lanes {
+  position: relative;
+  height: 100%;
+  z-index: 1;
+}
+
+.gantt-pill {
+  position: absolute;
+  height: 50px;
+  padding: 8px 10px;
 }
 
 .full-bleed-right {
@@ -173,6 +268,50 @@ body {
   gap: 24px;
   margin-bottom: 24px;
   flex-wrap: wrap;
+}
+
+.status-stack {
+  display: grid;
+  gap: 8px;
+  min-width: min(320px, 100%);
+}
+
+.status-top {
+  margin: 0 8px 12px;
+}
+
+.schedule-top {
+  margin-bottom: 0px;
+}
+
+.status-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-inline .notice {
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+.date-label {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.date-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: white;
+}
+
+.date-control .button.small {
+  padding: 4px 10px;
 }
 
 .panel-header h2 {
@@ -330,13 +469,13 @@ select:focus {
 .schedule-hour {
   font-weight: 600;
   color: var(--ink-2);
-  padding: 2px 2px;
+  padding: 2px 2px 0px 2px;
 }
 
 .schedule-items {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
   min-width: 0;
 }
 
@@ -351,8 +490,8 @@ select:focus {
   text-align: left;
   width: 100%;
   cursor: pointer;
-  border: 1px solid rgba(251, 146, 60, 0.25);
-  background: white;
+  border: 1px solid rgba(37, 99, 235, 0.55);
+  background: rgba(191, 219, 254, 0.45);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -362,10 +501,34 @@ select:focus {
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
   min-width: 0;
   flex-wrap: wrap;
+  margin-top: -15px;
 }
 
 .booking-pill:hover {
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.booking-pill.template {
+  background: rgba(251, 146, 60, 0.18);
+  border-color: rgba(249, 115, 22, 0.5);
+}
+
+.template-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(249, 115, 22, 0.5);
+  background: rgba(251, 146, 60, 0.12);
+  margin-bottom: 12px;
+}
+
+.template-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .booking-pill strong {
@@ -376,6 +539,7 @@ select:focus {
   display: block;
   color: var(--ink-3);
   font-size: 0.9rem;
+  margin-top: -8px;
 }
 
 .booking-time {
