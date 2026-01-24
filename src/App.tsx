@@ -148,7 +148,9 @@ function App() {
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
-  const [authView, setAuthView] = useState<'signin' | 'setPassword'>('signin')
+  const [authView, setAuthView] = useState<'signin' | 'signup' | 'recovery' | 'setPassword'>(
+    'signin',
+  )
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [signupEmail, setSignupEmail] = useState('')
@@ -1728,36 +1730,119 @@ function App() {
           </section>
         </main>
       ) : (
-        <main className="shell">
-          <section className="panel login-panel">
-            <div className="panel-header">
-              <h2>Login</h2>
-              <p>Use your email to sign in or request access.</p>
-            </div>
-            {authView === 'setPassword' ? (
-              <div className="form-grid">
-                <label className="field">
-                  <span>New password</span>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Confirm password</span>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
-                  />
-                </label>
-                <button className="button primary" type="button" onClick={handleSetPassword}>
-                  {isAuthBusy ? 'Saving...' : 'Set password'}
-                </button>
+        <main className="shell auth-shell">
+          {status || error ? (
+            <div className="auth-status">
+              <div className="status-inline">
+                {status ? <div className="notice success">{status}</div> : null}
+                {error ? <div className="notice error">{error}</div> : null}
               </div>
-            ) : (
-              <>
+            </div>
+          ) : null}
+          <section className="panel login-panel auth-card single">
+            <div className="auth-form">
+              <div className="panel-header">
+                <h2>
+                  {authView === 'setPassword'
+                    ? 'Reset password'
+                    : authView === 'signup'
+                      ? 'Sign up'
+                      : authView === 'recovery'
+                        ? 'Forgot password'
+                        : 'Sign in'}
+                </h2>
+              </div>
+              {authView === 'setPassword' ? (
+                <div className="form-grid">
+                  <label className="field">
+                    <span>New password</span>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Confirm password</span>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                    />
+                  </label>
+                  <button className="button primary" type="button" onClick={handleSetPassword}>
+                    {isAuthBusy ? 'Saving...' : 'Set password'}
+                  </button>
+                </div>
+              ) : authView === 'signup' ? (
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      value={signupEmail}
+                      onChange={(event) => setSignupEmail(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Create password</span>
+                    <input
+                      type="password"
+                      value={signupPassword}
+                      onChange={(event) => setSignupPassword(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Confirm password</span>
+                    <input
+                      type="password"
+                      value={signupConfirm}
+                      onChange={(event) => setSignupConfirm(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handleSignUp}
+                    disabled={isSendingEmail}
+                  >
+                    {isSendingEmail ? 'Sending email...' : 'Send verification email'}
+                  </button>
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => setAuthView('signin')}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              ) : authView === 'recovery' ? (
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handlePasswordReset}
+                    disabled={isAuthBusy}
+                  >
+                    {isAuthBusy ? 'Sending email...' : 'Send reset email'}
+                  </button>
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => setAuthView('signin')}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              ) : (
                 <div className="form-grid">
                   <label className="field">
                     <span>Email</span>
@@ -1783,53 +1868,25 @@ function App() {
                   >
                     {isAuthBusy ? 'Signing in...' : 'Sign in'}
                   </button>
-                  <button className="button ghost" type="button" onClick={handlePasswordReset}>
-                    Forgot password
-                  </button>
+                  <div className="auth-links">
+                    <button
+                      className="link-button"
+                      type="button"
+                      onClick={() => setAuthView('signup')}
+                    >
+                      Create an account
+                    </button>
+                    <button
+                      className="link-button"
+                      type="button"
+                      onClick={() => setAuthView('recovery')}
+                    >
+                      Forgot password
+                    </button>
+                  </div>
                 </div>
-                <div className="divider" />
-                <div className="form-grid">
-                  <label className="field">
-                    <span>First time? Email</span>
-                    <input
-                      type="email"
-                      value={signupEmail}
-                      onChange={(event) => setSignupEmail(event.target.value)}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Create password</span>
-                    <input
-                      type="password"
-                      value={signupPassword}
-                      onChange={(event) => setSignupPassword(event.target.value)}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Confirm password</span>
-                    <input
-                      type="password"
-                      value={signupConfirm}
-                      onChange={(event) => setSignupConfirm(event.target.value)}
-                    />
-                  </label>
-                  <button
-                    className="button ghost"
-                    type="button"
-                    onClick={handleSignUp}
-                    disabled={isSendingEmail}
-                  >
-                    {isSendingEmail ? 'Sending email...' : 'Create account'}
-                  </button>
-                </div>
-              </>
-            )}
-            {status || error ? (
-              <div className="status-inline">
-                {status ? <div className="notice success">{status}</div> : null}
-                {error ? <div className="notice error">{error}</div> : null}
-              </div>
-            ) : null}
+              )}
+            </div>
           </section>
         </main>
       )}
