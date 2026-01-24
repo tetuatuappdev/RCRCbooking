@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabaseClient'
 
@@ -17,6 +17,12 @@ type Boat = {
   id: string
   name: string
   type: string | null
+  code?: string | null
+  weight?: string | null
+  build_year?: string | null
+  usage_type?: string | null
+  in_service?: string | null
+  notes?: string | null
 }
 
 type Booking = {
@@ -48,6 +54,11 @@ type TemplateException = {
   exception_date: string
 }
 
+type BoatPermission = {
+  boat_id: string
+  member_id: string
+}
+
 type ScheduleItem = {
   id: string
   boat_id: string | null
@@ -58,6 +69,7 @@ type ScheduleItem = {
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
+  weekday?: number
   boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
   members?: { name: string } | { name: string }[] | null
 }
@@ -115,8 +127,14 @@ function App() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
+  const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
   const [selectedDate, setSelectedDate] = useState(getTodayString)
+  const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
+    getWeekdayIndex(getTodayString()),
+  )
+  const [boatTypeFilter, setBoatTypeFilter] = useState('')
+  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats'>('schedule')
 
   const [showNewBooking, setShowNewBooking] = useState(false)
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
@@ -124,6 +142,20 @@ function App() {
   const [bookingBoatId, setBookingBoatId] = useState('')
   const [startTime, setStartTime] = useState('07:30')
   const [endTime, setEndTime] = useState('08:00')
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
+  const [boatForm, setBoatForm] = useState({
+    code: '',
+    name: '',
+    type: '',
+    weight: '',
+    build_year: '',
+    usage_type: '',
+    in_service: '',
+    notes: '',
+  })
+  const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
+  const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -136,6 +168,8 @@ function App() {
     const timer = window.setTimeout(() => setStatus(null), 5000)
     return () => window.clearTimeout(timer)
   }, [status])
+
+  const isAdmin = true
   const skipBackdropClick = useRef(false)
 
   useEffect(() => {
@@ -156,26 +190,94 @@ function App() {
     loadMembers()
   }, [])
 
-  useEffect(() => {
-    const loadBoats = async () => {
-      const { data, error: boatsError } = await supabase
-        .from('boats')
-        .select('id, name, type')
-        .order('type', { ascending: true, nullsFirst: false })
-        .order('name', { ascending: true })
+  const fetchBoats = useCallback(async () => {
+    const { data, error: boatsError } = await supabase
+      .from('boats')
+      .select('id, name, type, code, weight, build_year, usage_type, in_service, notes')
+      .order('type', { ascending: true, nullsFirst: false })
+      .order('name', { ascending: true })
 
-      if (boatsError) {
-        setError(boatsError.message)
-        return
-      }
-
-      setBoats(data ?? [])
+    if (boatsError) {
+      setError(boatsError.message)
+      return
     }
 
-    loadBoats()
+    setBoats(data ?? [])
   }, [])
 
+  const fetchBoatPermissions = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('boat_permissions')
+      .select('boat_id, member_id')
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    const map: Record<string, Set<string>> = {}
+    ;(data ?? []).forEach((row: BoatPermission) => {
+      if (!map[row.boat_id]) {
+        map[row.boat_id] = new Set()
+      }
+      map[row.boat_id].add(row.member_id)
+    })
+    setBoatPermissions(map)
+  }, [])
+
+  const filteredBoats = useMemo(() => {
+    if (!boatTypeFilter) {
+      return boats
+    }
+    return boats.filter((boat) => (boat.type ?? '').toLowerCase() === boatTypeFilter)
+  }, [boats, boatTypeFilter])
+
+  const allowedBoats = useMemo(() => {
+    if (!bookingMemberId) {
+      return boats.filter((boat) => (boat.usage_type ?? '').toLowerCase() !== 'restricted')
+    }
+
+    return boats.filter((boat) => {
+      const usage = (boat.usage_type ?? '').toLowerCase()
+      if (usage === 'restricted') {
+        return false
+      }
+      if (usage === 'captains permission') {
+        return Boolean(boatPermissions[boat.id]?.has(bookingMemberId))
+      }
+      return true
+    })
+  }, [boats, bookingMemberId, boatPermissions])
+
+  const boatTypeOptions = useMemo(() => {
+    const types = new Set<string>()
+    boats.forEach((boat) => {
+      if (boat.type) {
+        types.add(boat.type)
+      }
+    })
+    return Array.from(types).sort()
+  }, [boats])
+
   useEffect(() => {
+    fetchBoats()
+  }, [fetchBoats])
+
+  useEffect(() => {
+    if (viewMode === 'boats') {
+      fetchBoats()
+    }
+  }, [fetchBoats, viewMode])
+
+  useEffect(() => {
+    fetchBoatPermissions()
+  }, [fetchBoatPermissions])
+
+  useEffect(() => {
+    if (viewMode !== 'schedule') {
+      return
+    }
+
     const loadBookings = async () => {
       const dayStart = new Date(`${selectedDate}T00:00:00`)
       const dayEnd = new Date(dayStart)
@@ -226,45 +328,86 @@ function App() {
     }
 
     loadBookings()
-  }, [selectedDate])
+  }, [selectedDate, viewMode])
+
+  useEffect(() => {
+    if (viewMode !== 'templates') {
+      return
+    }
+
+    const loadTemplates = async () => {
+      setIsLoading(true)
+      const { data, error } = await supabase
+        .from('booking_templates')
+        .select(
+          'id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+        )
+        .eq('weekday', selectedTemplateWeekday)
+        .order('start_time', { ascending: true })
+      setIsLoading(false)
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      setTemplateBookings(data ?? [])
+    }
+
+    loadTemplates()
+  }, [selectedTemplateWeekday, viewMode])
 
   const scheduleItems = useMemo<ScheduleItem[]>(() => {
-    const fromBookings: ScheduleItem[] = bookings.map((booking) => ({
-      ...booking,
-      isTemplate: false,
-    }))
-
     const excludedTemplateIds = new Set(
       templateExceptions.map((exception) => exception.template_id),
     )
 
     const fromTemplates: ScheduleItem[] = templateBookings
-      .filter((template) => !excludedTemplateIds.has(template.id))
+      .filter((template) => viewMode === 'templates' || !excludedTemplateIds.has(template.id))
       .map((template) => {
-      const startTime = normalizeTime(template.start_time)
-      const endTime = normalizeTime(template.end_time)
-      return {
-        id: `template-${template.id}`,
-        templateId: template.id,
-        boat_id: template.boat_id,
-        member_id: template.member_id,
-        start_time: new Date(`${selectedDate}T${startTime}:00`).toISOString(),
-        end_time: new Date(`${selectedDate}T${endTime}:00`).toISOString(),
-        boats: template.boats ?? null,
-        members: template.members ?? null,
-        boat_label: template.boat_label ?? null,
-        member_label: template.member_label ?? null,
-        isTemplate: true,
-      }
-    })
+        const startTime = normalizeTime(template.start_time)
+        const endTime = normalizeTime(template.end_time)
+        const baseDate =
+          viewMode === 'templates'
+            ? new Date(`2000-01-01T${startTime}:00`)
+            : new Date(`${selectedDate}T${startTime}:00`)
+        const endDate =
+          viewMode === 'templates'
+            ? new Date(`2000-01-01T${endTime}:00`)
+            : new Date(`${selectedDate}T${endTime}:00`)
+        return {
+          id: `template-${template.id}`,
+          templateId: template.id,
+          boat_id: template.boat_id,
+          member_id: template.member_id,
+          start_time: baseDate.toISOString(),
+          end_time: endDate.toISOString(),
+          boats: template.boats ?? null,
+          members: template.members ?? null,
+          boat_label: template.boat_label ?? null,
+          member_label: template.member_label ?? null,
+          weekday: template.weekday,
+          isTemplate: true,
+        }
+      })
+
+    if (viewMode === 'templates') {
+      return fromTemplates
+    }
+
+    const fromBookings: ScheduleItem[] = bookings.map((booking) => ({
+      ...booking,
+      isTemplate: false,
+    }))
 
     return [...fromTemplates, ...fromBookings]
-  }, [bookings, templateBookings, selectedDate])
+  }, [bookings, templateBookings, selectedDate, templateExceptions, viewMode])
 
   const ganttLayout = useMemo(() => {
     const timelineStart = START_HOUR
     const timelineEnd = END_HOUR
-    const dayStart = new Date(`${selectedDate}T07:30:00`)
+    const dayBase = viewMode === 'templates' ? '2000-01-01' : selectedDate
+    const dayStart = new Date(`${dayBase}T07:30:00`)
     const dayStartMs = dayStart.getTime()
 
     const items = scheduleItems
@@ -313,6 +456,253 @@ function App() {
     setEndTime('08:30')
   }
 
+  const openBoatEditor = (boat?: Boat) => {
+    if (!boat) {
+      setEditingBoat({
+        id: '',
+        name: '',
+        type: null,
+      })
+      setBoatForm({
+        code: '',
+        name: '',
+        type: '',
+        weight: '',
+        build_year: '',
+        usage_type: '',
+        in_service: '',
+        notes: '',
+      })
+      setBoatPermissionIds([])
+      setSelectedPermissionMemberId('')
+      return
+    }
+    setEditingBoat(boat)
+    setBoatForm({
+      code: boat.code ?? '',
+      name: boat.name ?? '',
+      type: boat.type ?? '',
+      weight: boat.weight ?? '',
+      build_year: boat.build_year ?? '',
+      usage_type: boat.usage_type ?? '',
+      in_service: boat.in_service ?? '',
+      notes: boat.notes ?? '',
+    })
+    const boatPerms = boatPermissions[boat.id]
+    setBoatPermissionIds(boatPerms ? Array.from(boatPerms) : [])
+    setSelectedPermissionMemberId('')
+  }
+
+  const handleSaveBoat = async () => {
+    if (!editingBoat) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const payload = {
+      code: boatForm.code || null,
+      name: boatForm.name || null,
+      type: boatForm.type || null,
+      weight: boatForm.weight || null,
+      build_year: boatForm.build_year || null,
+      usage_type: boatForm.usage_type || null,
+      in_service: boatForm.in_service || null,
+      notes: boatForm.notes || null,
+    }
+
+    const { data: savedBoat, error } = editingBoat.id
+      ? await supabase.from('boats').update(payload).eq('id', editingBoat.id).select('id').single()
+      : await supabase.from('boats').insert(payload).select('id').single()
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    const boatId = savedBoat?.id ?? editingBoat.id
+
+    if (boatForm.usage_type.toLowerCase() === 'captains permission' && boatId) {
+      await supabase.from('boat_permissions').delete().eq('boat_id', boatId)
+      if (boatPermissionIds.length > 0) {
+        const inserts = boatPermissionIds.map((memberId) => ({
+          boat_id: boatId,
+          member_id: memberId,
+        }))
+        const { error: permsError } = await supabase.from('boat_permissions').insert(inserts)
+        if (permsError) {
+          setError(permsError.message)
+          return
+        }
+      }
+      fetchBoatPermissions()
+    }
+
+    setStatus(editingBoat.id ? 'Boat updated' : 'Boat created')
+    setEditingBoat(null)
+    fetchBoats()
+  }
+
+  const handleDeleteBoat = async () => {
+    if (!editingBoat || !editingBoat.id) {
+      return
+    }
+
+    const confirmDelete = window.confirm('Are you sure you want to delete this boat?')
+    if (!confirmDelete) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error } = await supabase.from('boats').delete().eq('id', editingBoat.id)
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus('Boat deleted')
+    setEditingBoat(null)
+    fetchBoats()
+  }
+
+  const getWeekdayOptions = () => [
+    { label: 'Monday', value: 1 },
+    { label: 'Tuesday', value: 2 },
+    { label: 'Wednesday', value: 3 },
+    { label: 'Thursday', value: 4 },
+    { label: 'Friday', value: 5 },
+    { label: 'Saturday', value: 6 },
+    { label: 'Sunday', value: 0 },
+  ]
+
+  const handleSaveTemplate = async () => {
+    setError(null)
+    setStatus(null)
+
+    if (!bookingMemberId) {
+      setError('Select a member for the template.')
+      return
+    }
+
+    const start = startTime
+    const end = endTime
+
+    if (!start || !end) {
+      setError('Enter a valid start and end time.')
+      return
+    }
+
+    if (end <= start) {
+      setError('End time must be after start time.')
+      return
+    }
+
+    if (bookingBoatId) {
+      const { data: conflicts, error: conflictError } = await supabase
+        .from('booking_templates')
+        .select('id, start_time, end_time')
+        .eq('weekday', selectedTemplateWeekday)
+        .eq('boat_id', bookingBoatId)
+        .lt('start_time', end)
+        .gt('end_time', start)
+
+      if (conflictError) {
+        setError(conflictError.message)
+        return
+      }
+
+      const filteredConflicts =
+        editingTemplate?.templateId && conflicts
+          ? conflicts.filter((row) => row.id !== editingTemplate.templateId)
+          : conflicts
+
+      if (filteredConflicts && filteredConflicts.length > 0) {
+        const message = 'That boat already has a template booking in this time range.'
+        setError(null)
+        window.alert(message)
+        return
+      }
+    }
+
+    const boatName = boats.find((boat) => boat.id === bookingBoatId)?.name ?? ''
+    const memberName = members.find((member) => member.id === bookingMemberId)?.name ?? ''
+
+    const payload = {
+      weekday: selectedTemplateWeekday,
+      boat_id: bookingBoatId || null,
+      member_id: bookingMemberId,
+      start_time: start,
+      end_time: end,
+      boat_label: boatName || 'Generic',
+      member_label: memberName || 'Member',
+    }
+
+    if (editingTemplate?.templateId) {
+      const { error: updateError } = await supabase
+        .from('booking_templates')
+        .update(payload)
+        .eq('id', editingTemplate.templateId)
+
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      setStatus('Template booking updated')
+    } else {
+      const { error: insertError } = await supabase.from('booking_templates').insert(payload)
+      if (insertError) {
+        setError(insertError.message)
+        return
+      }
+      setStatus('Template booking created')
+    }
+
+    resetBookingForm()
+
+    const { data, error } = await supabase
+      .from('booking_templates')
+      .select(
+        'id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+      )
+      .eq('weekday', selectedTemplateWeekday)
+      .order('start_time', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setTemplateBookings(data ?? [])
+  }
+
+  const handleDeleteTemplateRow = async () => {
+    if (!editingTemplate?.templateId) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error: deleteError } = await supabase
+      .from('booking_templates')
+      .delete()
+      .eq('id', editingTemplate.templateId)
+
+    if (deleteError) {
+      setError(deleteError.message)
+      return
+    }
+
+    setTemplateBookings((prev) => prev.filter((item) => item.id !== editingTemplate.templateId))
+    setStatus('Template booking removed')
+    resetBookingForm()
+  }
+
   const handleSaveBooking = async () => {
     setError(null)
     setStatus(null)
@@ -325,6 +715,22 @@ function App() {
     if (!bookingMemberId) {
       setError('Select a member for the booking.')
       return
+    }
+
+    if (bookingBoatId) {
+      const boat = boats.find((item) => item.id === bookingBoatId)
+      const usage = (boat?.usage_type ?? '').toLowerCase()
+      if (usage === 'restricted') {
+        window.alert('This boat is restricted and cannot be booked.')
+        return
+      }
+      if (usage === 'captains permission') {
+        const allowed = boatPermissions[bookingBoatId]?.has(bookingMemberId)
+        if (!allowed) {
+          window.alert('This member is not permitted to book this boat.')
+          return
+        }
+      }
     }
 
     const startDate = toDateTime(selectedDate, startTime)
@@ -520,47 +926,203 @@ function App() {
         }
       }}
     >
+      <div className="header-menu">
+        <button
+          className="menu-button"
+          type="button"
+          onClick={() => setIsMenuOpen((prev) => !prev)}
+          aria-label="Open menu"
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        {isMenuOpen ? (
+          <>
+            <div className="menu-backdrop" onClick={() => setIsMenuOpen(false)} />
+            <div className="menu-panel">
+              <button
+                className="menu-item"
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  setShowNewBooking(false)
+                  setEditingBooking(null)
+                  setEditingTemplate(null)
+                  setViewMode('schedule')
+                }}
+              >
+                Book a boat
+              </button>
+              <button
+                className="menu-item"
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  window.open(
+                    'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UMTJTOFJGTVpYWjM2N0hVM1Q0WUFVUDZDWi4u&route=shorturl',
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }}
+              >
+                Report an incident
+              </button>
+              <button
+                className="menu-item"
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  window.open('https://river.grosvenor-rowingclub.org.uk/', '_blank', 'noopener,noreferrer')
+                }}
+              >
+                River and weather conditions
+              </button>
+              <button
+                className="menu-item"
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  window.open(
+                    'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UOUg4VFRLM0xMNU9YQ0xZQTdZMUdGOUk2SC4u&route=shorturl',
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }}
+              >
+                Outing Risk Assessment
+              </button>
+              {isAdmin ? (
+                <>
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      setShowNewBooking(false)
+                      setEditingBooking(null)
+                      setEditingTemplate(null)
+                      setViewMode('templates')
+                      setSelectedTemplateWeekday(getWeekdayIndex(selectedDate))
+                    }}
+                  >
+                    Edit Template
+                  </button>
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      setShowNewBooking(false)
+                      setEditingBooking(null)
+                      setEditingTemplate(null)
+                      setViewMode('boats')
+                    }}
+                  >
+                    Edit boat list
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setViewMode('boats')
+                  }}
+                >
+                  See boat list
+                </button>
+              )}
+              <button
+                className="menu-item"
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  window.alert('Logout will be enabled when auth is back.')
+                }}
+              >
+                Logout
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
       <div className="page-pad">
         <header className="hero">
-          <p className="eyebrow">RCRC Booking</p>
+          <p className="eyebrow">RCRC Booking Sheet</p>
         </header>
       </div>
 
       <main className="shell">
         <div className="page-pad schedule-top">
           <div className="actions">
-            <div className="date-control">
-              <button
-                className="button ghost small"
-                type="button"
-                onClick={() => {
-                  const base = new Date(`${selectedDate}T12:00:00`)
-                  base.setDate(base.getDate() - 1)
-                  setSelectedDate(base.toISOString().slice(0, 10))
-                }}
-              >
-                ‹
-              </button>
-              <span className="date-label">
-                {new Date(`${selectedDate}T12:00:00`).toLocaleDateString([], {
-                  weekday: 'short',
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                })}
-              </span>
-              <button
-                className="button ghost small"
-                type="button"
-                onClick={() => {
-                  const base = new Date(`${selectedDate}T12:00:00`)
-                  base.setDate(base.getDate() + 1)
-                  setSelectedDate(base.toISOString().slice(0, 10))
-                }}
-              >
-                ›
-              </button>
-            </div>
+            {viewMode === 'schedule' ? (
+              <div className="date-control">
+                <button
+                  className="button ghost small"
+                  type="button"
+                  onClick={() => {
+                    const base = new Date(`${selectedDate}T12:00:00`)
+                    base.setDate(base.getDate() - 1)
+                    setSelectedDate(base.toISOString().slice(0, 10))
+                  }}
+                >
+                  ‹
+                </button>
+                <span className="date-label">
+                  {new Date(`${selectedDate}T12:00:00`).toLocaleDateString([], {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                  })}
+                </span>
+                <button
+                  className="button ghost small"
+                  type="button"
+                  onClick={() => {
+                    const base = new Date(`${selectedDate}T12:00:00`)
+                    base.setDate(base.getDate() + 1)
+                    setSelectedDate(base.toISOString().slice(0, 10))
+                  }}
+                >
+                  ›
+                </button>
+              </div>
+            ) : viewMode === 'templates' ? (
+              <label className="field compact">
+                <span>Weekday</span>
+                <select
+                  value={selectedTemplateWeekday}
+                  onChange={(event) => setSelectedTemplateWeekday(Number(event.target.value))}
+                >
+                  {getWeekdayOptions().map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : viewMode === 'boats' ? (
+              <label className="field compact">
+                <span>Type</span>
+                <select
+                  value={boatTypeFilter}
+                  onChange={(event) => setBoatTypeFilter(event.target.value)}
+                >
+                  <option value="">All types</option>
+                  {boatTypeOptions.map((type) => (
+                    <option key={type} value={type.toLowerCase()}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {status || error ? (
               <div className="status-inline">
                 {status ? <div className="notice success">{status}</div> : null}
@@ -570,116 +1132,173 @@ function App() {
           </div>
         </div>
 
-        <section className="panel schedule-panel full-bleed-right">
-          <div className="gantt">
-            {isLoading ? (
-              <p className="empty-state">Loading schedule...</p>
-            ) : (
-              <div className="gantt-scroll">
-                <div
-                  className="gantt-grid"
-                  style={{
-                    width: ganttLayout.totalHours * HOUR_WIDTH,
-                    height: ganttLayout.lanes * LANE_HEIGHT,
-                  }}
-                >
-                  <div className="gantt-verticals">
-                    {Array.from({ length: ganttLayout.totalHours + 1 }, (_, index) => (
-                      <div
-                        key={`hour-${index}`}
-                        className="gantt-line"
-                        style={{
-                          left: index * HOUR_WIDTH,
-                        }}
-                      />
-                    ))}
-                    {Array.from({ length: ganttLayout.totalHours }, (_, index) => (
-                      <div
-                        key={`half-${index}`}
-                        className="gantt-line minor"
-                        style={{
-                          left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="gantt-hours">
-                    {Array.from(
-                      { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
-                      (_, index) => Math.ceil(START_HOUR) + index,
-                    ).map((hour) => (
-                      <div
-                        key={hour}
-                        className="gantt-hour"
-                        style={{
-                          left: (hour - START_HOUR) * HOUR_WIDTH,
-                        }}
-                      >
-                        {formatHourLabel(hour)}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="gantt-lanes">
-                    {ganttLayout.items.map((booking) => {
-                      const boatName =
-                        getRelatedName(booking.boats) ??
-                        (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
-                      const boatType = getRelatedType(booking.boats)
-                      const memberName =
-                        getRelatedName(booking.members) ??
-                        (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
-                      const left = (booking.startMinutes / 60) * HOUR_WIDTH
-                      const width = Math.max(
-                        36,
-                        ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
-                      )
-                          return (
-                            <button
-                              key={booking.id}
-                              type="button"
-                              className={`booking-pill gantt-pill${
-                                booking.isTemplate ? ' template' : ''
-                              }`}
-                              style={{
-                                transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
-                                width,
-                              }}
-                              onClick={() => {
-                                if (booking.isTemplate) {
-                                  if (!booking.boat_id || !booking.templateId) {
-                                    return
-                                  }
+        <section
+          className={`panel schedule-panel full-bleed-right ${
+            viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
+          }`}
+        >
+          {viewMode === 'boats' ? (
+            <div className="boats-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Weight</th>
+                    <th>Build Yr</th>
+                    <th>Usage type</th>
+                    <th>In service</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBoats.map((boat) => (
+                    <tr
+                      key={boat.id}
+                      onClick={() => {
+                        if (isAdmin) {
+                          openBoatEditor(boat)
+                        }
+                      }}
+                    >
+                      <td>{boat.code ?? ''}</td>
+                      <td>{boat.name}</td>
+                      <td>{boat.type ?? ''}</td>
+                      <td>{boat.weight ?? ''}</td>
+                      <td>{boat.build_year ?? ''}</td>
+                      <td>{boat.usage_type ?? ''}</td>
+                      <td>{boat.in_service ?? ''}</td>
+                      <td>{boat.notes ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="gantt">
+              {isLoading ? (
+                <p className="empty-state">Loading schedule...</p>
+              ) : (
+                <div className="gantt-scroll">
+                  <div
+                    className="gantt-grid"
+                    style={{
+                      width: ganttLayout.totalHours * HOUR_WIDTH,
+                      height: ganttLayout.lanes * LANE_HEIGHT,
+                    }}
+                  >
+                    <div className="gantt-verticals">
+                      {Array.from({ length: ganttLayout.totalHours + 1 }, (_, index) => (
+                        <div
+                          key={`hour-${index}`}
+                          className="gantt-line"
+                          style={{
+                            left: index * HOUR_WIDTH,
+                          }}
+                        />
+                      ))}
+                      {Array.from({ length: ganttLayout.totalHours }, (_, index) => (
+                        <div
+                          key={`half-${index}`}
+                          className="gantt-line minor"
+                          style={{
+                            left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="gantt-hours">
+                      {Array.from(
+                        { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
+                        (_, index) => Math.ceil(START_HOUR) + index,
+                      ).map((hour) => (
+                        <div
+                          key={hour}
+                          className="gantt-hour"
+                          style={{
+                            left: (hour - START_HOUR) * HOUR_WIDTH,
+                          }}
+                        >
+                          {formatHourLabel(hour)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="gantt-lanes">
+                      {ganttLayout.items.map((booking) => {
+                        const boatName =
+                          getRelatedName(booking.boats) ??
+                          (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                        const boatType = getRelatedType(booking.boats)
+                        const memberName =
+                          getRelatedName(booking.members) ??
+                          (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                        const left = (booking.startMinutes / 60) * HOUR_WIDTH
+                        const width = Math.max(
+                          36,
+                          ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
+                        )
+                        return (
+                          <button
+                            key={booking.id}
+                            type="button"
+                            className={`booking-pill gantt-pill${
+                              booking.isTemplate ? ' template' : ''
+                            }`}
+                            style={{
+                              transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
+                              width,
+                            }}
+                            onClick={() => {
+                              if (booking.isTemplate) {
+                                if (viewMode === 'templates') {
                                   setEditingTemplate(booking)
                                   setEditingBooking(null)
                                   setShowNewBooking(false)
+                                  setBookingBoatId(booking.boat_id ?? '')
+                                  setBookingMemberId(booking.member_id ?? '')
+                                  setStartTime(formatTimeInput(booking.start_time))
+                                  setEndTime(formatTimeInput(booking.end_time))
+                                  if (typeof booking.weekday === 'number') {
+                                    setSelectedTemplateWeekday(booking.weekday)
+                                  }
                                   return
                                 }
-                                setEditingBooking(booking as Booking)
-                                setEditingTemplate(null)
+                                if (!booking.boat_id || !booking.templateId) {
+                                  return
+                                }
+                                setEditingTemplate(booking)
+                                setEditingBooking(null)
                                 setShowNewBooking(false)
-                                setBookingBoatId(booking.boat_id)
-                                setBookingMemberId(booking.member_id ?? '')
-                                setStartTime(formatTimeInput(booking.start_time))
-                                setEndTime(formatTimeInput(booking.end_time))
-                              }}
-                            >
-                              <div>
-                                <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
-                                <span>{memberName}</span>
-                              </div>
-                            </button>
-                          )
-                        })}
+                                return
+                              }
+                              setEditingBooking(booking as Booking)
+                              setEditingTemplate(null)
+                              setShowNewBooking(false)
+                              setBookingBoatId(booking.boat_id)
+                              setBookingMemberId(booking.member_id ?? '')
+                              setStartTime(formatTimeInput(booking.start_time))
+                              setEndTime(formatTimeInput(booking.end_time))
+                            }}
+                          >
+                            <div>
+                              <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
+                              <span>{memberName}</span>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </section>
 
       </main>
 
-      {!showNewBooking && !editingBooking && !editingTemplate
+      {!showNewBooking && !editingBooking && !editingTemplate && viewMode !== 'boats'
         ? createPortal(
             <button
               className="fab"
@@ -688,6 +1307,12 @@ function App() {
                 setEditingBooking(null)
                 setEditingTemplate(null)
                 setShowNewBooking(true)
+                if (viewMode === 'templates') {
+                  setBookingBoatId('')
+                  setBookingMemberId('')
+                  setStartTime('07:30')
+                  setEndTime('08:30')
+                }
                 setTimeout(() => {
                   skipBackdropClick.current = false
                 }, 0)
@@ -714,13 +1339,21 @@ function App() {
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>
-                {editingTemplate ? 'Template booking' : editingBooking ? 'Edit booking' : 'New booking'}
+                {editingTemplate && viewMode === 'templates'
+                  ? 'Edit template'
+                  : editingTemplate
+                    ? 'Template booking'
+                    : editingBooking
+                      ? 'Edit booking'
+                      : viewMode === 'templates'
+                        ? 'New template booking'
+                        : 'New booking'}
               </h3>
               <button className="button ghost" onClick={resetBookingForm}>
                 Close
               </button>
             </div>
-            {editingTemplate ? (
+            {editingTemplate && viewMode !== 'templates' ? (
               <>
                 <div className="template-summary">
                   <div className="template-info">
@@ -747,6 +1380,63 @@ function App() {
                   Skip for this date
                 </button>
               </>
+            ) : viewMode === 'templates' ? (
+              <>
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Member</span>
+                    <select
+                      value={bookingMemberId}
+                      onChange={(event) => setBookingMemberId(event.target.value)}
+                    >
+                      <option value="">Select a member</option>
+                      {members.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Boat (optional)</span>
+                    <select
+                      value={bookingBoatId}
+                      onChange={(event) => setBookingBoatId(event.target.value)}
+                    >
+                      <option value="">Generic / no boat</option>
+                      {boats.map((boat) => (
+                        <option key={boat.id} value={boat.id}>
+                          {boat.type ? `${boat.type} ${boat.name}` : boat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Start time</span>
+                    <input
+                      type="time"
+                      value={startTime}
+                      onChange={(event) => setStartTime(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>End time</span>
+                    <input
+                      type="time"
+                      value={endTime}
+                      onChange={(event) => setEndTime(event.target.value)}
+                    />
+                  </label>
+                  <button className="button primary" onClick={handleSaveTemplate}>
+                    {editingTemplate ? 'Save template' : 'Create template'}
+                  </button>
+                  {editingTemplate ? (
+                    <button className="button ghost danger" onClick={handleDeleteTemplateRow}>
+                      Delete template
+                    </button>
+                  ) : null}
+                </div>
+              </>
             ) : (
               <>
                 <div className="form-grid">
@@ -771,7 +1461,7 @@ function App() {
                       onChange={(event) => setBookingBoatId(event.target.value)}
                     >
                       <option value="">Select a boat</option>
-                      {boats.map((boat) => (
+                      {(viewMode === 'templates' ? boats : allowedBoats).map((boat) => (
                         <option key={boat.id} value={boat.id}>
                           {boat.type ? `${boat.type} ${boat.name}` : boat.name}
                         </option>
@@ -820,6 +1510,184 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {editingBoat ? (
+        <div className="modal-backdrop" onClick={() => setEditingBoat(null)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Edit boat</h3>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span>Code</span>
+                <input
+                  value={boatForm.code}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, code: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Name</span>
+                <input
+                  value={boatForm.name}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Type</span>
+                <input
+                  value={boatForm.type}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, type: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Weight</span>
+                <input
+                  value={boatForm.weight}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, weight: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Build Yr</span>
+                <input
+                  value={boatForm.build_year}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, build_year: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Usage type</span>
+                <select
+                  value={boatForm.usage_type}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, usage_type: event.target.value }))
+                  }
+                >
+                  <option value="">Select usage type</option>
+                  <option value="Captains permission">Captains permission</option>
+                  <option value="Restricted">Restricted</option>
+                  <option value="General use">General use</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>In service</span>
+                <select
+                  value={boatForm.in_service}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, in_service: event.target.value }))
+                  }
+                >
+                  <option value="">Select status</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Notes</span>
+                <input
+                  value={boatForm.notes}
+                  onChange={(event) =>
+                    setBoatForm((prev) => ({ ...prev, notes: event.target.value }))
+                  }
+                />
+              </label>
+              {(boatForm.usage_type || '').toLowerCase() === 'captains permission' ? (
+                <div className="field">
+                  <span>Allowed members</span>
+                  <div className="permission-controls">
+                    <select
+                      value={selectedPermissionMemberId}
+                      onChange={(event) => setSelectedPermissionMemberId(event.target.value)}
+                    >
+                      <option value="">Select a member</option>
+                      {members.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="button ghost small"
+                      type="button"
+                      onClick={() => {
+                        if (!selectedPermissionMemberId) {
+                          return
+                        }
+                        if (!boatPermissionIds.includes(selectedPermissionMemberId)) {
+                          setBoatPermissionIds((prev) => [...prev, selectedPermissionMemberId])
+                        }
+                      }}
+                    >
+                      Add
+                    </button>
+                    <button
+                      className="button ghost small"
+                      type="button"
+                      onClick={() => {
+                        if (!selectedPermissionMemberId) {
+                          return
+                        }
+                        setBoatPermissionIds((prev) =>
+                          prev.filter((id) => id !== selectedPermissionMemberId),
+                        )
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <textarea
+                    className="permission-list"
+                    readOnly
+                    value={boatPermissionIds
+                      .map((id) => members.find((member) => member.id === id)?.name)
+                      .filter(Boolean)
+                      .join('\n')}
+                    placeholder="No members selected"
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-actions">
+              <button className="button primary" onClick={handleSaveBoat}>
+                Save
+              </button>
+              <button className="button ghost" onClick={() => setEditingBoat(null)}>
+                Cancel
+              </button>
+            </div>
+            <button className="button ghost danger delete-row" onClick={handleDeleteBoat}>
+              Delete boat
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!showNewBooking &&
+      !editingBooking &&
+      !editingTemplate &&
+      !editingBoat &&
+      viewMode === 'boats' &&
+      isAdmin
+        ? createPortal(
+            <button
+              className="fab"
+              onClick={() => openBoatEditor()}
+              aria-label="New boat"
+              type="button"
+            >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

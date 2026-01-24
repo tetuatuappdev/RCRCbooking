@@ -45,3 +45,15 @@ create policy "Template exceptions insert for anon" on template_exceptions
 create policy "Template exceptions delete for anon" on template_exceptions
   for delete to anon
   using (true);
+
+create policy "Boat permissions readable for anon" on boat_permissions
+  for select to anon
+  using (true);
+
+create policy "Boat permissions insert for anon" on boat_permissions
+  for insert to anon
+  with check (true);
+
+create policy "Boat permissions delete for anon" on boat_permissions
+  for delete to anon
+  using (true);

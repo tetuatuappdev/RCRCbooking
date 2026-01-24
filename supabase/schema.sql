@@ -52,6 +52,13 @@ create table if not exists template_exceptions (
   unique (template_id, exception_date)
 );
 
+create table if not exists boat_permissions (
+  boat_id uuid not null references boats(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (boat_id, member_id)
+);
+
 create table if not exists admins (
   member_id uuid primary key references members(id) on delete cascade,
   created_at timestamptz not null default now()
@@ -65,6 +72,7 @@ alter table bookings enable row level security;
 alter table admins enable row level security;
 alter table booking_templates enable row level security;
 alter table template_exceptions enable row level security;
+alter table boat_permissions enable row level security;
 
 create policy "Members readable for login" on members
   for select to anon, authenticated
@@ -125,6 +133,28 @@ create policy "Template exceptions delete for authed" on template_exceptions
           where member_id = (select id from members where email = auth.email())
         )
       )
+    )
+  );
+
+create policy "Boat permissions readable for authed" on boat_permissions
+  for select to authenticated
+  using (true);
+
+create policy "Boat permissions insert for authed" on boat_permissions
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Boat permissions delete for authed" on boat_permissions
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
     )
   );
 
