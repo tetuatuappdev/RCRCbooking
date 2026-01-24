@@ -175,6 +175,8 @@ function App() {
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
   const [editingTemplate, setEditingTemplate] = useState<ScheduleItem | null>(null)
   const [bookingBoatId, setBookingBoatId] = useState('')
+  const [bookingBoatIds, setBookingBoatIds] = useState<string[]>([])
+  const [boatSearch, setBoatSearch] = useState('')
   const [startTime, setStartTime] = useState('07:30')
   const [endTime, setEndTime] = useState('08:00')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -533,6 +535,22 @@ function App() {
     })
   }, [boats, boatPermissions, currentMember, isAdmin])
 
+  const bookingBoatsSource = useMemo(() => {
+    return isAdmin ? boats : allowedBoats
+  }, [allowedBoats, boats, isAdmin])
+
+  const filteredBookingBoats = useMemo(() => {
+    if (!boatSearch) {
+      return bookingBoatsSource
+    }
+    const query = boatSearch.toLowerCase()
+    return bookingBoatsSource.filter((boat) => {
+      const name = boat.name.toLowerCase()
+      const type = (boat.type ?? '').toLowerCase()
+      return name.includes(query) || type.includes(query)
+    })
+  }, [boatSearch, bookingBoatsSource])
+
   const boatTypeOptions = ['1', '2', '4', '8']
 
   useEffect(() => {
@@ -745,6 +763,8 @@ function App() {
     setEditingBooking(null)
     setEditingTemplate(null)
     setBookingBoatId('')
+    setBookingBoatIds([])
+    setBoatSearch('')
     if (currentMember && !isAdmin && viewMode === 'schedule') {
       setBookingMemberId(currentMember.id)
     } else {
@@ -1170,8 +1190,13 @@ function App() {
     setError(null)
     setStatus(null)
 
-    if (!bookingBoatId) {
-      setError('Select a boat for the booking.')
+    const selectedBoatIds = editingBooking
+      ? bookingBoatId
+        ? [bookingBoatId]
+        : []
+      : bookingBoatIds
+    if (selectedBoatIds.length === 0) {
+      setError('Select at least one boat for the booking.')
       return
     }
 
@@ -1186,17 +1211,17 @@ function App() {
       return
     }
 
-    if (bookingBoatId) {
-      const boat = boats.find((item) => item.id === bookingBoatId)
+    for (const boatId of selectedBoatIds) {
+      const boat = boats.find((item) => item.id === boatId)
       const usage = (boat?.usage_type ?? '').toLowerCase()
       if (usage === 'restricted') {
-        window.alert('This boat is restricted and cannot be booked.')
+        window.alert('One of the selected boats is restricted and cannot be booked.')
         return
       }
       if (usage === 'captains permission' && !isAdmin) {
         const memberId = currentMember?.id
-        if (!memberId || !boatPermissions[bookingBoatId]?.has(memberId)) {
-          window.alert('You do not have permission to book this boat.')
+        if (!memberId || !boatPermissions[boatId]?.has(memberId)) {
+          window.alert('You do not have permission to book one of the selected boats.')
           return
         }
       }
@@ -1225,8 +1250,8 @@ function App() {
 
     let conflictQuery = supabase
       .from('bookings')
-      .select('id')
-      .eq('boat_id', bookingBoatId)
+      .select('id, boat_id')
+      .in('boat_id', selectedBoatIds)
       .lt('start_time', endDate.toISOString())
       .gt('end_time', startDate.toISOString())
 
@@ -1241,11 +1266,11 @@ function App() {
       return
     }
 
-    const templateConflict = templateBookings.some((template) => {
+    const templateConflicts = templateBookings.filter((template) => {
       if (!template.boat_id) {
         return false
       }
-      if (template.boat_id !== bookingBoatId) {
+      if (!selectedBoatIds.includes(template.boat_id)) {
         return false
       }
       const startTime = normalizeTime(template.start_time)
@@ -1255,15 +1280,27 @@ function App() {
       return templateStart < endDate && templateEnd > startDate
     })
 
-    if (templateConflict) {
-      const message = 'That boat has a default booking during this time.'
+    if (templateConflicts.length > 0) {
+      const names = templateConflicts
+        .map((template) => boats.find((boat) => boat.id === template.boat_id)?.name ?? 'Boat')
+        .filter(Boolean)
+      const message = `Default booking conflict for: ${names.join(', ')}.`
       setError(null)
       window.alert(message)
       return
     }
 
     if (conflicts && conflicts.length > 0) {
-      const message = 'That boat is already booked for the selected time.'
+      const conflictNames = Array.from(
+        new Set(
+          conflicts
+            .map((row: { boat_id?: string }) =>
+              boats.find((boat) => boat.id === row.boat_id)?.name ?? null,
+            )
+            .filter(Boolean),
+        ),
+      )
+      const message = `Boat already booked: ${conflictNames.join(', ')}.`
       setError(null)
       window.alert(message)
       return
@@ -1286,18 +1323,19 @@ function App() {
       }
       setStatus('Booking updated.')
     } else {
-      const { error: insertError } = await supabase.from('bookings').insert({
-        boat_id: bookingBoatId,
+      const inserts = selectedBoatIds.map((boatId) => ({
+        boat_id: boatId,
         member_id: effectiveMemberId,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
-      })
+      }))
+      const { error: insertError } = await supabase.from('bookings').insert(inserts)
 
       if (insertError) {
         setError(insertError.message)
         return
       }
-      setStatus('Booking confirmed!')
+      setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
     }
 
     resetBookingForm()
@@ -1890,6 +1928,8 @@ function App() {
                                 setEditingBooking(null)
                                 setShowNewBooking(false)
                                 setBookingBoatId(booking.boat_id ?? '')
+                                setBookingBoatIds([])
+                                setBoatSearch('')
                                 setBookingMemberId(booking.member_id ?? '')
                                 setStartTime(formatTimeInput(booking.start_time))
                                 setEndTime(formatTimeInput(booking.end_time))
@@ -1907,6 +1947,8 @@ function App() {
                             setEditingTemplate(null)
                             setShowNewBooking(false)
                             setBookingBoatId(booking.boat_id ?? '')
+                            setBookingBoatIds([])
+                            setBoatSearch('')
                             setBookingMemberId(booking.member_id ?? '')
                             setStartTime(formatTimeInput(booking.start_time))
                             setEndTime(formatTimeInput(booking.end_time))
@@ -2127,6 +2169,8 @@ function App() {
                 } else if (viewMode === 'schedule' && currentMember && !isAdmin) {
                   setBookingMemberId(currentMember.id)
                 }
+                setBookingBoatIds([])
+                setBoatSearch('')
                 setTimeout(() => {
                   skipBackdropClick.current = false
                 }, 0)
@@ -2282,21 +2326,83 @@ function App() {
                       <input value={currentMember?.name ?? ''} readOnly />
                     </label>
                   )}
-                  <label className="field">
-                    <span>Boat</span>
-                    <select
-                      value={bookingBoatId}
-                      onChange={(event) => setBookingBoatId(event.target.value)}
-                      onFocus={refreshBoatAccess}
-                    >
-                      <option value="">Select a boat</option>
-                      {allowedBoats.map((boat) => (
-                        <option key={boat.id} value={boat.id}>
-                          {boat.type ? `${boat.type} ${boat.name}` : boat.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {editingBooking ? (
+                    <label className="field">
+                      <span>Boat</span>
+                      <select
+                        value={bookingBoatId}
+                        onChange={(event) => setBookingBoatId(event.target.value)}
+                        onFocus={refreshBoatAccess}
+                      >
+                        <option value="">Select a boat</option>
+                        {(isAdmin ? boats : allowedBoats).map((boat) => (
+                          <option key={boat.id} value={boat.id}>
+                            {boat.type ? `${boat.type} ${boat.name}` : boat.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <div className="field">
+                      <span>Boats</span>
+                      <input
+                        type="text"
+                        placeholder="Search boat type or name"
+                        value={boatSearch}
+                        onChange={(event) => setBoatSearch(event.target.value)}
+                        onFocus={refreshBoatAccess}
+                      />
+                      <div className="boat-chips">
+                        {bookingBoatIds.length === 0 ? (
+                          <span className="chip muted">No boats selected</span>
+                        ) : (
+                          bookingBoatIds.map((id) => {
+                            const boat = bookingBoatsSource.find((item) => item.id === id)
+                            const label = boat
+                              ? boat.type
+                                ? `${boat.type} ${boat.name}`
+                                : boat.name
+                              : id
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setBookingBoatIds((prev) =>
+                                    prev.filter((item) => item !== id),
+                                  )
+                                }
+                              >
+                                {label} ✕
+                              </button>
+                            )
+                          })
+                        )}
+                      </div>
+                      <div className="boat-list">
+                        {filteredBookingBoats.map((boat) => {
+                          const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
+                          const checked = bookingBoatIds.includes(boat.id)
+                          return (
+                            <label key={boat.id} className="boat-option">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  const next = event.target.checked
+                                  setBookingBoatIds((prev) =>
+                                    next ? [...prev, boat.id] : prev.filter((id) => id !== boat.id),
+                                  )
+                                }}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <label className="field">
                     <span>Start time</span>
                     <input

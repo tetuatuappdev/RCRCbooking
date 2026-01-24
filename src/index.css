@@ -687,6 +687,50 @@ body {
   width: auto;
 }
 
+.boat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chip {
+  border: 1px solid var(--stroke);
+  background: white;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.chip.muted {
+  color: var(--ink-3);
+  cursor: default;
+}
+
+.boat-list {
+  margin-top: 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  background: white;
+  display: grid;
+  gap: 6px;
+}
+
+.boat-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.boat-option input {
+  width: auto;
+}
+
 input,
 select {
   padding: 12px 14px;
