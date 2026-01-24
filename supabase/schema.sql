@@ -123,6 +123,15 @@ create policy "Members insert for authed" on members
     )
   );
 
+create policy "Members delete for authed" on members
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
 create policy "Boats readable for authed" on boats
   for select to authenticated
   using (true);
@@ -259,6 +268,33 @@ create policy "Admins insert for authed" on admins
     )
   );
 
+create policy "Admins delete for authed" on admins
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
 create policy "Allowed members readable" on allowed_member
   for select to anon, authenticated
   using (true);
+
+create policy "Allowed members insert for authed" on allowed_member
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Allowed members delete for authed" on allowed_member
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );

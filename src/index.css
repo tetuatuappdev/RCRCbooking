@@ -344,6 +344,37 @@ body {
   resize: vertical;
 }
 
+.access-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.access-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.access-table th,
+.access-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+  font-size: 0.9rem;
+}
+
+.access-table th:last-child,
+.access-table td:last-child {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.access-table tbody tr:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
 .boats-table th {
   position: sticky;
   top: 0;
@@ -617,6 +648,17 @@ body {
 .field span {
   font-size: 0.9rem;
   color: var(--ink-3);
+}
+
+.field.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.field.checkbox input {
+  width: auto;
 }
 
 input,

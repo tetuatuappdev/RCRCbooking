@@ -142,6 +142,9 @@ function App() {
   const [currentMember, setCurrentMember] = useState<Member | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
+  const [allowedMembers, setAllowedMembers] = useState<
+    { id: string; email: string; name: string; is_admin: boolean }[]
+  >([])
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
@@ -163,7 +166,9 @@ function App() {
     getWeekdayIndex(getTodayString()),
   )
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
-  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats'>('schedule')
+  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats' | 'access'>(
+    'schedule',
+  )
 
   const [showNewBooking, setShowNewBooking] = useState(false)
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
@@ -189,6 +194,12 @@ function App() {
   const [isSendingEmail, setIsSendingEmail] = useState(false)
   const [isAuthBusy, setIsAuthBusy] = useState(false)
   const [isMemberLoading, setIsMemberLoading] = useState(false)
+  const [showAccessEditor, setShowAccessEditor] = useState(false)
+  const [accessForm, setAccessForm] = useState({
+    email: '',
+    name: '',
+    is_admin: false,
+  })
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -269,6 +280,7 @@ function App() {
 
       if (data) {
         setCurrentMember(data)
+        fetchMembers()
         setIsMemberLoading(false)
         return
       }
@@ -315,6 +327,7 @@ function App() {
           }
           if (existingMember) {
             setCurrentMember(existingMember)
+            fetchMembers()
             setIsMemberLoading(false)
             return
           }
@@ -427,6 +440,20 @@ function App() {
     setBoatPermissions(map)
   }, [])
 
+  const fetchAllowedMembers = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('allowed_member')
+      .select('id, email, name, is_admin')
+      .order('name', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setAllowedMembers(data ?? [])
+  }, [])
+
   const filteredBoats = useMemo(() => {
     if (!boatTypeFilter) {
       return boats
@@ -468,7 +495,13 @@ function App() {
   }, [fetchBoatPermissions])
 
   useEffect(() => {
-    if (!isAdmin && viewMode === 'templates') {
+    if (viewMode === 'access' && isAdmin) {
+      fetchAllowedMembers()
+    }
+  }, [fetchAllowedMembers, isAdmin, viewMode])
+
+  useEffect(() => {
+    if (!isAdmin && (viewMode === 'templates' || viewMode === 'access')) {
       setViewMode('schedule')
     }
   }, [isAdmin, viewMode])
@@ -813,7 +846,10 @@ function App() {
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
+    const { error } = await supabase.auth.signOut({ scope: 'global' })
+    if (error) {
+      await supabase.auth.signOut({ scope: 'local' })
+    }
     setStatus('Logged out.')
     setAuthView('signin')
   }
@@ -1305,6 +1341,75 @@ function App() {
     setStatus('Booking removed')
   }
 
+  const handleSaveAccess = async () => {
+    setError(null)
+    setStatus(null)
+
+    const email = accessForm.email.trim().toLowerCase()
+    const name = accessForm.name.trim()
+    if (!email || !name) {
+      setError('Enter a name and email.')
+      return
+    }
+
+    const { error } = await supabase.from('allowed_member').insert({
+      email,
+      name,
+      is_admin: accessForm.is_admin,
+    })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus('Access added.')
+    setAccessForm({ email: '', name: '', is_admin: false })
+    setShowAccessEditor(false)
+    fetchAllowedMembers()
+  }
+
+  const handleDeleteAccess = async (member: { email: string }) => {
+    const confirmDelete = window.confirm('Remove this user access?')
+    if (!confirmDelete) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const email = member.email.toLowerCase()
+
+    const { data: memberRow, error: memberError } = await supabase
+      .from('members')
+      .select('id')
+      .ilike('email', email)
+      .maybeSingle()
+
+    if (memberError) {
+      setError(memberError.message)
+      return
+    }
+
+    if (memberRow?.id) {
+      await supabase.from('admins').delete().eq('member_id', memberRow.id)
+      await supabase.from('members').delete().eq('id', memberRow.id)
+    }
+
+    const { error: allowError } = await supabase
+      .from('allowed_member')
+      .delete()
+      .ilike('email', email)
+
+    if (allowError) {
+      setError(allowError.message)
+      return
+    }
+
+    setStatus('Access removed.')
+    fetchAllowedMembers()
+  }
+
   return (
     <div
       className="app"
@@ -1419,6 +1524,19 @@ function App() {
                       }}
                     >
                       Edit boat list
+                    </button>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('access')
+                      }}
+                    >
+                      Manage Accesses
                     </button>
                   </>
                 ) : (
@@ -1556,7 +1674,38 @@ function App() {
               viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
             }`}
           >
-            {viewMode === 'boats' ? (
+            {viewMode === 'access' ? (
+              <div className="access-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allowedMembers.map((member) => (
+                      <tr key={member.id}>
+                        <td>{member.name}</td>
+                        <td>{member.email}</td>
+                        <td>{member.is_admin ? 'Admin' : 'Member'}</td>
+                        <td>
+                          <button
+                            className="button ghost danger small"
+                            type="button"
+                            onClick={() => handleDeleteAccess(member)}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : viewMode === 'boats' ? (
               <div className="boats-table">
                 <table>
                   <thead>
@@ -1896,7 +2045,8 @@ function App() {
       !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
-      viewMode !== 'boats'
+      viewMode !== 'boats' &&
+      viewMode !== 'access'
         ? createPortal(
             <button
               className="fab"
@@ -2047,20 +2197,27 @@ function App() {
             ) : (
               <>
                 <div className="form-grid">
-                  <label className="field">
-                    <span>Member</span>
-                    <select
-                      value={bookingMemberId}
-                      onChange={(event) => setBookingMemberId(event.target.value)}
-                    >
-                      <option value="">Select a member</option>
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {isAdmin ? (
+                    <label className="field">
+                      <span>Member</span>
+                      <select
+                        value={bookingMemberId}
+                        onChange={(event) => setBookingMemberId(event.target.value)}
+                      >
+                        <option value="">Select a member</option>
+                        {members.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <label className="field">
+                      <span>Member</span>
+                      <input value={currentMember?.name ?? ''} readOnly />
+                    </label>
+                  )}
                   <label className="field">
                     <span>Boat</span>
                     <select
@@ -2277,6 +2434,55 @@ function App() {
         </div>
       ) : null}
 
+      {session && showAccessEditor ? (
+        <div className="modal-backdrop" onClick={() => setShowAccessEditor(false)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Add access</h3>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span>Name</span>
+                <input
+                  value={accessForm.name}
+                  onChange={(event) =>
+                    setAccessForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={accessForm.email}
+                  onChange={(event) =>
+                    setAccessForm((prev) => ({ ...prev, email: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field checkbox">
+                <input
+                  type="checkbox"
+                  checked={accessForm.is_admin}
+                  onChange={(event) =>
+                    setAccessForm((prev) => ({ ...prev, is_admin: event.target.checked }))
+                  }
+                />
+                <span>Admin access</span>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="button primary" onClick={handleSaveAccess}>
+                Add
+              </button>
+              <button className="button ghost" onClick={() => setShowAccessEditor(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {session &&
       !showNewBooking &&
       !editingBooking &&
@@ -2289,6 +2495,29 @@ function App() {
               className="fab"
               onClick={() => openBoatEditor()}
               aria-label="New boat"
+              type="button"
+            >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
+
+      {session &&
+      !showNewBooking &&
+      !editingBooking &&
+      !editingTemplate &&
+      !editingBoat &&
+      viewMode === 'access' &&
+      isAdmin
+        ? createPortal(
+            <button
+              className="fab"
+              onClick={() => {
+                setShowAccessEditor(true)
+                setAccessForm({ email: '', name: '', is_admin: false })
+              }}
+              aria-label="New access"
               type="button"
             >
               +

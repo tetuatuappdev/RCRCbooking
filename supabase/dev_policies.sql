@@ -5,8 +5,24 @@ create policy "Members readable for anon" on members
   for select to anon
   using (true);
 
+create policy "Members delete for anon" on members
+  for delete to anon
+  using (true);
+
 create policy "Allowed members readable for anon" on allowed_member
   for select to anon
+  using (true);
+
+create policy "Allowed members insert for anon" on allowed_member
+  for insert to anon
+  with check (true);
+
+create policy "Allowed members delete for anon" on allowed_member
+  for delete to anon
+  using (true);
+
+create policy "Admins delete for anon" on admins
+  for delete to anon
   using (true);
 
 create policy "Boats readable for anon" on boats
