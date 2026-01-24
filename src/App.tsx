@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabaseClient'
 
 const START_HOUR = 7.5
@@ -137,6 +138,9 @@ const getRelatedType = (
 }
 
 function App() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [currentMember, setCurrentMember] = useState<Member | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -144,6 +148,7 @@ function App() {
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
+  const [selectedMemberId, setSelectedMemberId] = useState('')
   const [selectedDate, setSelectedDate] = useState(getTodayString)
   const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
     getWeekdayIndex(getTodayString()),
@@ -172,6 +177,7 @@ function App() {
   const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
   const datePickerRef = useRef<HTMLInputElement | null>(null)
+  const [isSendingEmail, setIsSendingEmail] = useState(false)
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -185,7 +191,6 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [status])
 
-  const isAdmin = true
   const skipBackdropClick = useRef(false)
 
   useEffect(() => {
@@ -205,6 +210,77 @@ function App() {
 
     loadMembers()
   }, [])
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!session?.user?.email) {
+      setCurrentMember(null)
+      setIsAdmin(false)
+      setBookings([])
+      setTemplateBookings([])
+      setTemplateExceptions([])
+      setShowNewBooking(false)
+      setEditingBooking(null)
+      setEditingTemplate(null)
+      return
+    }
+
+    const loadCurrentMember = async () => {
+      const { data, error } = await supabase
+        .from('members')
+        .select('id, name, email')
+        .eq('email', session.user.email)
+        .maybeSingle()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      setCurrentMember(data ?? null)
+    }
+
+    loadCurrentMember()
+  }, [session])
+
+  useEffect(() => {
+    if (!currentMember) {
+      setIsAdmin(false)
+      return
+    }
+
+    const loadAdminStatus = async () => {
+      const { data, error } = await supabase
+        .from('admins')
+        .select('member_id')
+        .eq('member_id', currentMember.id)
+        .maybeSingle()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      setIsAdmin(Boolean(data))
+    }
+
+    loadAdminStatus()
+  }, [currentMember])
 
   const fetchBoats = useCallback(async () => {
     const { data, error: boatsError } = await supabase
@@ -245,35 +321,27 @@ function App() {
     if (!boatTypeFilter) {
       return boats
     }
-    return boats.filter((boat) => (boat.type ?? '').toLowerCase() === boatTypeFilter)
+    return boats.filter((boat) => (boat.type ?? '').startsWith(boatTypeFilter))
   }, [boats, boatTypeFilter])
 
   const allowedBoats = useMemo(() => {
-    if (!bookingMemberId) {
-      return boats.filter((boat) => (boat.usage_type ?? '').toLowerCase() !== 'restricted')
+    const memberId = currentMember?.id
+    if (!memberId && !isAdmin) {
+      return []
     }
-
     return boats.filter((boat) => {
       const usage = (boat.usage_type ?? '').toLowerCase()
       if (usage === 'restricted') {
         return false
       }
       if (usage === 'captains permission') {
-        return Boolean(boatPermissions[boat.id]?.has(bookingMemberId))
+        return isAdmin || (memberId ? boatPermissions[boat.id]?.has(memberId) : false)
       }
       return true
     })
-  }, [boats, bookingMemberId, boatPermissions])
+  }, [boats, boatPermissions, currentMember, isAdmin])
 
-  const boatTypeOptions = useMemo(() => {
-    const types = new Set<string>()
-    boats.forEach((boat) => {
-      if (boat.type) {
-        types.add(boat.type)
-      }
-    })
-    return Array.from(types).sort()
-  }, [boats])
+  const boatTypeOptions = ['1', '2', '4', '8']
 
   useEffect(() => {
     fetchBoats()
@@ -290,7 +358,19 @@ function App() {
   }, [fetchBoatPermissions])
 
   useEffect(() => {
-    if (viewMode !== 'schedule') {
+    if (!isAdmin && viewMode === 'templates') {
+      setViewMode('schedule')
+    }
+  }, [isAdmin, viewMode])
+
+  useEffect(() => {
+    if (currentMember && !isAdmin && viewMode === 'schedule') {
+      setBookingMemberId(currentMember.id)
+    }
+  }, [currentMember, isAdmin, viewMode])
+
+  useEffect(() => {
+    if (viewMode !== 'schedule' || !session) {
       return
     }
 
@@ -344,10 +424,10 @@ function App() {
     }
 
     loadBookings()
-  }, [selectedDate, viewMode])
+  }, [selectedDate, session, viewMode])
 
   useEffect(() => {
-    if (viewMode !== 'templates') {
+    if (viewMode !== 'templates' || !session) {
       return
     }
 
@@ -371,7 +451,7 @@ function App() {
     }
 
     loadTemplates()
-  }, [selectedTemplateWeekday, viewMode])
+  }, [selectedTemplateWeekday, session, viewMode])
 
   const scheduleItems = useMemo<ScheduleItem[]>(() => {
     const excludedTemplateIds = new Set(
@@ -467,9 +547,60 @@ function App() {
     setEditingBooking(null)
     setEditingTemplate(null)
     setBookingBoatId('')
-    setBookingMemberId('')
+    if (currentMember && !isAdmin && viewMode === 'schedule') {
+      setBookingMemberId(currentMember.id)
+    } else {
+      setBookingMemberId('')
+    }
     setStartTime('07:30')
     setEndTime('08:30')
+  }
+
+  const canEditBooking = (booking: { member_id: string | null }) => {
+    if (isAdmin) {
+      return true
+    }
+    return Boolean(currentMember && booking.member_id === currentMember.id)
+  }
+
+  const canEditTemplate = (item: { member_id: string | null }) => {
+    if (isAdmin) {
+      return true
+    }
+    return Boolean(currentMember && item.member_id === currentMember.id)
+  }
+
+  const handleSendLogin = async () => {
+    setError(null)
+    setStatus(null)
+
+    const selectedMember = members.find((member) => member.id === selectedMemberId)
+    if (!selectedMember) {
+      setError('Select your name to request a login email.')
+      return
+    }
+
+    setIsSendingEmail(true)
+    const { error: loginError } = await supabase.auth.signInWithOtp({
+      email: selectedMember.email,
+      options: {
+        emailRedirectTo:
+          import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() || window.location.origin,
+      },
+    })
+    setIsSendingEmail(false)
+
+    if (loginError) {
+      setError(loginError.message)
+      return
+    }
+
+    setStatus(`Login email sent to ${selectedMember.email}. Check your inbox.`)
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setStatus('Logged out.')
   }
 
   const openBoatEditor = (boat?: Boat) => {
@@ -599,6 +730,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (!isAdmin) {
+      setError('Only admins can edit templates.')
+      return
+    }
+
     if (!bookingMemberId) {
       setError('Select a member for the template.')
       return
@@ -704,6 +840,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (!isAdmin) {
+      setError('Only admins can edit templates.')
+      return
+    }
+
     const { error: deleteError } = await supabase
       .from('booking_templates')
       .delete()
@@ -728,8 +869,14 @@ function App() {
       return
     }
 
-    if (!bookingMemberId) {
+    const effectiveMemberId = isAdmin ? bookingMemberId : currentMember?.id ?? ''
+    if (!effectiveMemberId) {
       setError('Select a member for the booking.')
+      return
+    }
+
+    if (!isAdmin && editingBooking && !canEditBooking(editingBooking)) {
+      setError('You can only edit your own bookings.')
       return
     }
 
@@ -740,10 +887,10 @@ function App() {
         window.alert('This boat is restricted and cannot be booked.')
         return
       }
-      if (usage === 'captains permission') {
-        const allowed = boatPermissions[bookingBoatId]?.has(bookingMemberId)
-        if (!allowed) {
-          window.alert('This member is not permitted to book this boat.')
+      if (usage === 'captains permission' && !isAdmin) {
+        const memberId = currentMember?.id
+        if (!memberId || !boatPermissions[bookingBoatId]?.has(memberId)) {
+          window.alert('You do not have permission to book this boat.')
           return
         }
       }
@@ -821,7 +968,7 @@ function App() {
         .from('bookings')
         .update({
           boat_id: bookingBoatId,
-          member_id: bookingMemberId,
+          member_id: effectiveMemberId,
           start_time: startDate.toISOString(),
           end_time: endDate.toISOString(),
         })
@@ -835,7 +982,7 @@ function App() {
     } else {
       const { error: insertError } = await supabase.from('bookings').insert({
         boat_id: bookingBoatId,
-        member_id: bookingMemberId,
+        member_id: effectiveMemberId,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
       })
@@ -871,6 +1018,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (!canEditBooking(editingBooking)) {
+      setError('You can only delete your own bookings.')
+      return
+    }
+
     const { error: deleteError } = await supabase
       .from('bookings')
       .delete()
@@ -905,6 +1057,11 @@ function App() {
 
     setError(null)
     setStatus(null)
+
+    if (!canEditTemplate(editingTemplate)) {
+      setError('You can only edit your own template bookings.')
+      return
+    }
 
     const { data: exceptionRow, error: insertError } = await supabase
       .from('template_exceptions')
@@ -948,88 +1105,108 @@ function App() {
         }
       }}
     >
-      <div className="header-menu">
-        <button
-          className="menu-button"
-          type="button"
-          onClick={() => setIsMenuOpen((prev) => !prev)}
-          aria-label="Open menu"
-        >
-          <span />
-          <span />
-          <span />
-        </button>
-        {isMenuOpen ? (
-          <>
-            <div className="menu-backdrop" onClick={() => setIsMenuOpen(false)} />
-            <div className="menu-panel">
-              <button
-                className="menu-item"
-                type="button"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  setShowNewBooking(false)
-                  setEditingBooking(null)
-                  setEditingTemplate(null)
-                  setViewMode('schedule')
-                }}
-              >
-                Book a boat
-              </button>
-              <button
-                className="menu-item"
-                type="button"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  window.open(
-                    'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UMTJTOFJGTVpYWjM2N0hVM1Q0WUFVUDZDWi4u&route=shorturl',
-                    '_blank',
-                    'noopener,noreferrer',
-                  )
-                }}
-              >
-                Report an incident
-              </button>
-              <button
-                className="menu-item"
-                type="button"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  window.open('https://river.grosvenor-rowingclub.org.uk/', '_blank', 'noopener,noreferrer')
-                }}
-              >
-                River and weather conditions
-              </button>
-              <button
-                className="menu-item"
-                type="button"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  window.open(
-                    'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UOUg4VFRLM0xMNU9YQ0xZQTdZMUdGOUk2SC4u&route=shorturl',
-                    '_blank',
-                    'noopener,noreferrer',
-                  )
-                }}
-              >
-                Outing Risk Assessment
-              </button>
-              {isAdmin ? (
-                <>
-                  <button
-                    className="menu-item"
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false)
-                      setShowNewBooking(false)
-                      setEditingBooking(null)
-                      setEditingTemplate(null)
-                      setViewMode('templates')
-                      setSelectedTemplateWeekday(getWeekdayIndex(selectedDate))
-                    }}
-                  >
-                    Edit Template
-                  </button>
+      {session ? (
+        <div className="header-menu">
+          <button
+            className="menu-button"
+            type="button"
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+            aria-label="Open menu"
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          {isMenuOpen ? (
+            <>
+              <div className="menu-backdrop" onClick={() => setIsMenuOpen(false)} />
+              <div className="menu-panel">
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setViewMode('schedule')
+                  }}
+                >
+                  Book a boat
+                </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.open(
+                      'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UMTJTOFJGTVpYWjM2N0hVM1Q0WUFVUDZDWi4u&route=shorturl',
+                      '_blank',
+                      'noopener,noreferrer',
+                    )
+                  }}
+                >
+                  Report an incident
+                </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.open(
+                      'https://river.grosvenor-rowingclub.org.uk/',
+                      '_blank',
+                      'noopener,noreferrer',
+                    )
+                  }}
+                >
+                  River and weather conditions
+                </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.open(
+                      'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UOUg4VFRLM0xMNU9YQ0xZQTdZMUdGOUk2SC4u&route=shorturl',
+                      '_blank',
+                      'noopener,noreferrer',
+                    )
+                  }}
+                >
+                  Outing Risk Assessment
+                </button>
+                {isAdmin ? (
+                  <>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('templates')
+                        setSelectedTemplateWeekday(getWeekdayIndex(selectedDate))
+                      }}
+                    >
+                      Edit Template
+                    </button>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('boats')
+                      }}
+                    >
+                      Edit boat list
+                    </button>
+                  </>
+                ) : (
                   <button
                     className="menu-item"
                     type="button"
@@ -1041,38 +1218,24 @@ function App() {
                       setViewMode('boats')
                     }}
                   >
-                    Edit boat list
+                    See boat list
                   </button>
-                </>
-              ) : (
+                )}
                 <button
                   className="menu-item"
                   type="button"
                   onClick={() => {
                     setIsMenuOpen(false)
-                    setShowNewBooking(false)
-                    setEditingBooking(null)
-                    setEditingTemplate(null)
-                    setViewMode('boats')
+                    handleLogout()
                   }}
                 >
-                  See boat list
+                  Logout
                 </button>
-              )}
-              <button
-                className="menu-item"
-                type="button"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  window.alert('Logout will be enabled when auth is back.')
-                }}
-              >
-                Logout
-              </button>
-            </div>
-          </>
-        ) : null}
-      </div>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <div className="page-pad">
         <header className="hero">
           <p className="eyebrow">
@@ -1082,260 +1245,322 @@ function App() {
         </header>
       </div>
 
-      <main className="shell">
-        <div className="page-pad schedule-top">
-          <div className="actions">
-            {viewMode === 'schedule' ? (
-              <div className="date-control">
-                <button
-                  className="button ghost small"
-                  type="button"
-                  onClick={() => {
-                    const base = new Date(`${selectedDate}T12:00:00`)
-                    base.setDate(base.getDate() - 1)
-                    setSelectedDate(base.toISOString().slice(0, 10))
-                  }}
-                >
-                  ‹
-                </button>
-                <button
-                  className="date-label date-trigger"
-                  type="button"
-                  onClick={() => {
-                    if (datePickerRef.current?.showPicker) {
-                      datePickerRef.current.showPicker()
-                    } else {
-                      datePickerRef.current?.focus()
-                    }
-                  }}
-                >
-                  {formatDayLabel(selectedDate)}
-                </button>
-                <button
-                  className="button ghost small"
-                  type="button"
-                  onClick={() => {
-                    const base = new Date(`${selectedDate}T12:00:00`)
-                    base.setDate(base.getDate() + 1)
-                    setSelectedDate(base.toISOString().slice(0, 10))
-                  }}
-                >
-                  ›
-                </button>
-                <input
-                  ref={datePickerRef}
-                  className="date-hidden"
-                  type="date"
-                  value={selectedDate}
-                  onChange={(event) => setSelectedDate(event.target.value)}
-                />
+      {session ? (
+        <main className="shell">
+          <div className="page-pad schedule-top">
+            <div className="actions">
+              {viewMode === 'schedule' ? (
+                <div className="date-control">
+                  <button
+                    className="button ghost small"
+                    type="button"
+                    onClick={() => {
+                      const base = new Date(`${selectedDate}T12:00:00`)
+                      base.setDate(base.getDate() - 1)
+                      setSelectedDate(base.toISOString().slice(0, 10))
+                    }}
+                  >
+                    ‹
+                  </button>
+                  <button
+                    className="date-label date-trigger"
+                    type="button"
+                    onClick={() => {
+                      if (datePickerRef.current?.showPicker) {
+                        datePickerRef.current.showPicker()
+                      } else {
+                        datePickerRef.current?.focus()
+                      }
+                    }}
+                  >
+                    {formatDayLabel(selectedDate)}
+                  </button>
+                  <button
+                    className="button ghost small"
+                    type="button"
+                    onClick={() => {
+                      const base = new Date(`${selectedDate}T12:00:00`)
+                      base.setDate(base.getDate() + 1)
+                      setSelectedDate(base.toISOString().slice(0, 10))
+                    }}
+                  >
+                    ›
+                  </button>
+                  <input
+                    ref={datePickerRef}
+                    className="date-hidden"
+                    type="date"
+                    value={selectedDate}
+                    onChange={(event) => setSelectedDate(event.target.value)}
+                  />
+                </div>
+              ) : viewMode === 'templates' ? (
+                <label className="field compact">
+                  <span>Weekday</span>
+                  <select
+                    value={selectedTemplateWeekday}
+                    onChange={(event) => setSelectedTemplateWeekday(Number(event.target.value))}
+                  >
+                    {getWeekdayOptions().map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : viewMode === 'boats' ? (
+                <label className="field compact">
+                  <span>Type</span>
+                  <select
+                    value={boatTypeFilter}
+                    onChange={(event) => setBoatTypeFilter(event.target.value)}
+                  >
+                    <option value="">All types</option>
+                    {boatTypeOptions.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {status || error || (!currentMember && session) ? (
+                <div className="status-inline">
+                  {status ? <div className="notice success">{status}</div> : null}
+                  {error ? <div className="notice error">{error}</div> : null}
+                  {!currentMember && session ? (
+                    <div className="notice error">Your account is not linked to a member.</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <section
+            className={`panel schedule-panel full-bleed-right ${
+              viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
+            }`}
+          >
+            {viewMode === 'boats' ? (
+              <div className="boats-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th>Weight</th>
+                      <th>Build Yr</th>
+                      <th>Usage type</th>
+                      <th>In service</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredBoats.map((boat) => (
+                      <tr
+                        key={boat.id}
+                        onClick={() => {
+                          if (isAdmin) {
+                            openBoatEditor(boat)
+                          }
+                        }}
+                      >
+                        <td>{boat.code ?? ''}</td>
+                        <td>{boat.name}</td>
+                        <td>{boat.type ?? ''}</td>
+                        <td>{boat.weight ?? ''}</td>
+                        <td>{boat.build_year ?? ''}</td>
+                        <td>{boat.usage_type ?? ''}</td>
+                        <td>{boat.in_service ?? ''}</td>
+                        <td>{boat.notes ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ) : viewMode === 'templates' ? (
-              <label className="field compact">
-                <span>Weekday</span>
+            ) : (
+              <div className="gantt">
+                {isLoading ? (
+                  <p className="empty-state">Loading schedule...</p>
+                ) : (
+                  <div className="gantt-scroll">
+                    <div
+                      className="gantt-grid"
+                      style={{
+                        width: ganttLayout.totalHours * HOUR_WIDTH,
+                        height: ganttLayout.lanes * LANE_HEIGHT,
+                      }}
+                    >
+                      <div className="gantt-verticals">
+                        {Array.from({ length: ganttLayout.totalHours + 1 }, (_, index) => (
+                          <div
+                            key={`hour-${index}`}
+                            className="gantt-line"
+                            style={{
+                              left: index * HOUR_WIDTH,
+                            }}
+                          />
+                        ))}
+                        {Array.from({ length: ganttLayout.totalHours }, (_, index) => (
+                          <div
+                            key={`half-${index}`}
+                            className="gantt-line minor"
+                            style={{
+                              left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="gantt-hours">
+                        {Array.from(
+                          { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
+                          (_, index) => Math.ceil(START_HOUR) + index,
+                        ).map((hour) => (
+                          <div
+                            key={hour}
+                            className="gantt-hour"
+                            style={{
+                              left: (hour - START_HOUR) * HOUR_WIDTH,
+                            }}
+                          >
+                            {formatHourLabel(hour)}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="gantt-lanes">
+                        {ganttLayout.items.map((booking) => {
+                          const boatName =
+                            getRelatedName(booking.boats) ??
+                            (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                          const boatType = getRelatedType(booking.boats)
+                          const memberName =
+                            getRelatedName(booking.members) ??
+                            (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                          const left = (booking.startMinutes / 60) * HOUR_WIDTH
+                          const width = Math.max(
+                            36,
+                            ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
+                          )
+                          const canOpenTemplate =
+                            viewMode === 'templates'
+                              ? isAdmin
+                              : Boolean(
+                                  booking.boat_id &&
+                                    booking.templateId &&
+                                    canEditTemplate(booking),
+                                )
+                          const canOpenBooking = booking.isTemplate
+                            ? canOpenTemplate
+                            : canEditBooking(booking as Booking)
+                          const handleBookingClick = () => {
+                            if (!canOpenBooking) {
+                              return
+                            }
+                            if (booking.isTemplate) {
+                              if (viewMode === 'templates') {
+                                setEditingTemplate(booking)
+                                setEditingBooking(null)
+                                setShowNewBooking(false)
+                                setBookingBoatId(booking.boat_id ?? '')
+                                setBookingMemberId(booking.member_id ?? '')
+                                setStartTime(formatTimeInput(booking.start_time))
+                                setEndTime(formatTimeInput(booking.end_time))
+                                if (typeof booking.weekday === 'number') {
+                                  setSelectedTemplateWeekday(booking.weekday)
+                                }
+                                return
+                              }
+                              setEditingTemplate(booking)
+                              setEditingBooking(null)
+                              setShowNewBooking(false)
+                              return
+                            }
+                            setEditingBooking(booking as Booking)
+                            setEditingTemplate(null)
+                            setShowNewBooking(false)
+                            setBookingBoatId(booking.boat_id ?? '')
+                            setBookingMemberId(booking.member_id ?? '')
+                            setStartTime(formatTimeInput(booking.start_time))
+                            setEndTime(formatTimeInput(booking.end_time))
+                          }
+                          return (
+                            <button
+                              key={booking.id}
+                              type="button"
+                              className={`booking-pill gantt-pill${
+                                booking.isTemplate ? ' template' : ''
+                              }`}
+                              style={{
+                                transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
+                                width,
+                              }}
+                              onClick={handleBookingClick}
+                              disabled={!canOpenBooking}
+                              aria-disabled={!canOpenBooking}
+                            >
+                              <div>
+                                <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
+                                <span>{memberName}</span>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </main>
+      ) : (
+        <main className="shell">
+          <section className="panel login-panel">
+            <div className="panel-header">
+              <h2>Login</h2>
+              <p>Select your name to receive a magic login email.</p>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span>Name</span>
                 <select
-                  value={selectedTemplateWeekday}
-                  onChange={(event) => setSelectedTemplateWeekday(Number(event.target.value))}
+                  value={selectedMemberId}
+                  onChange={(event) => setSelectedMemberId(event.target.value)}
                 >
-                  {getWeekdayOptions().map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                  <option value="">Select your name</option>
+                  {members.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.name}
                     </option>
                   ))}
                 </select>
               </label>
-            ) : viewMode === 'boats' ? (
-              <label className="field compact">
-                <span>Type</span>
-                <select
-                  value={boatTypeFilter}
-                  onChange={(event) => setBoatTypeFilter(event.target.value)}
-                >
-                  <option value="">All types</option>
-                  {boatTypeOptions.map((type) => (
-                    <option key={type} value={type.toLowerCase()}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
+              <button
+                className="button primary"
+                type="button"
+                onClick={handleSendLogin}
+                disabled={isSendingEmail}
+              >
+                {isSendingEmail ? 'Sending email...' : 'Send login email'}
+              </button>
+            </div>
             {status || error ? (
               <div className="status-inline">
                 {status ? <div className="notice success">{status}</div> : null}
                 {error ? <div className="notice error">{error}</div> : null}
               </div>
             ) : null}
-          </div>
-        </div>
+          </section>
+        </main>
+      )}
 
-        <section
-          className={`panel schedule-panel full-bleed-right ${
-            viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
-          }`}
-        >
-          {viewMode === 'boats' ? (
-            <div className="boats-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Weight</th>
-                    <th>Build Yr</th>
-                    <th>Usage type</th>
-                    <th>In service</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredBoats.map((boat) => (
-                    <tr
-                      key={boat.id}
-                      onClick={() => {
-                        if (isAdmin) {
-                          openBoatEditor(boat)
-                        }
-                      }}
-                    >
-                      <td>{boat.code ?? ''}</td>
-                      <td>{boat.name}</td>
-                      <td>{boat.type ?? ''}</td>
-                      <td>{boat.weight ?? ''}</td>
-                      <td>{boat.build_year ?? ''}</td>
-                      <td>{boat.usage_type ?? ''}</td>
-                      <td>{boat.in_service ?? ''}</td>
-                      <td>{boat.notes ?? ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="gantt">
-              {isLoading ? (
-                <p className="empty-state">Loading schedule...</p>
-              ) : (
-                <div className="gantt-scroll">
-                  <div
-                    className="gantt-grid"
-                    style={{
-                      width: ganttLayout.totalHours * HOUR_WIDTH,
-                      height: ganttLayout.lanes * LANE_HEIGHT,
-                    }}
-                  >
-                    <div className="gantt-verticals">
-                      {Array.from({ length: ganttLayout.totalHours + 1 }, (_, index) => (
-                        <div
-                          key={`hour-${index}`}
-                          className="gantt-line"
-                          style={{
-                            left: index * HOUR_WIDTH,
-                          }}
-                        />
-                      ))}
-                      {Array.from({ length: ganttLayout.totalHours }, (_, index) => (
-                        <div
-                          key={`half-${index}`}
-                          className="gantt-line minor"
-                          style={{
-                            left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <div className="gantt-hours">
-                      {Array.from(
-                        { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
-                        (_, index) => Math.ceil(START_HOUR) + index,
-                      ).map((hour) => (
-                        <div
-                          key={hour}
-                          className="gantt-hour"
-                          style={{
-                            left: (hour - START_HOUR) * HOUR_WIDTH,
-                          }}
-                        >
-                          {formatHourLabel(hour)}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="gantt-lanes">
-                      {ganttLayout.items.map((booking) => {
-                        const boatName =
-                          getRelatedName(booking.boats) ??
-                          (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
-                        const boatType = getRelatedType(booking.boats)
-                        const memberName =
-                          getRelatedName(booking.members) ??
-                          (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
-                        const left = (booking.startMinutes / 60) * HOUR_WIDTH
-                        const width = Math.max(
-                          36,
-                          ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
-                        )
-                        return (
-                          <button
-                            key={booking.id}
-                            type="button"
-                            className={`booking-pill gantt-pill${
-                              booking.isTemplate ? ' template' : ''
-                            }`}
-                            style={{
-                              transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
-                              width,
-                            }}
-                            onClick={() => {
-                              if (booking.isTemplate) {
-                                if (viewMode === 'templates') {
-                                  setEditingTemplate(booking)
-                                  setEditingBooking(null)
-                                  setShowNewBooking(false)
-                                  setBookingBoatId(booking.boat_id ?? '')
-                                  setBookingMemberId(booking.member_id ?? '')
-                                  setStartTime(formatTimeInput(booking.start_time))
-                                  setEndTime(formatTimeInput(booking.end_time))
-                                  if (typeof booking.weekday === 'number') {
-                                    setSelectedTemplateWeekday(booking.weekday)
-                                  }
-                                  return
-                                }
-                                if (!booking.boat_id || !booking.templateId) {
-                                  return
-                                }
-                                setEditingTemplate(booking)
-                                setEditingBooking(null)
-                                setShowNewBooking(false)
-                                return
-                              }
-                              setEditingBooking(booking as Booking)
-                              setEditingTemplate(null)
-                              setShowNewBooking(false)
-                              setBookingBoatId(booking.boat_id ?? '')
-                              setBookingMemberId(booking.member_id ?? '')
-                              setStartTime(formatTimeInput(booking.start_time))
-                              setEndTime(formatTimeInput(booking.end_time))
-                            }}
-                          >
-                            <div>
-                              <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
-                              <span>{memberName}</span>
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-      </main>
-
-      {!showNewBooking && !editingBooking && !editingTemplate && viewMode !== 'boats'
+      {session &&
+      (isAdmin || currentMember) &&
+      !showNewBooking &&
+      !editingBooking &&
+      !editingTemplate &&
+      viewMode !== 'boats'
         ? createPortal(
             <button
               className="fab"
@@ -1349,6 +1574,8 @@ function App() {
                   setBookingMemberId('')
                   setStartTime('07:30')
                   setEndTime('08:30')
+                } else if (viewMode === 'schedule' && currentMember && !isAdmin) {
+                  setBookingMemberId(currentMember.id)
                 }
                 setTimeout(() => {
                   skipBackdropClick.current = false
@@ -1363,7 +1590,7 @@ function App() {
           )
         : null}
 
-      {showNewBooking || editingBooking || editingTemplate ? (
+      {session && (showNewBooking || editingBooking || editingTemplate) ? (
         <div
           className="modal-backdrop"
           onClick={() => {
@@ -1420,20 +1647,27 @@ function App() {
             ) : viewMode === 'templates' ? (
               <>
                 <div className="form-grid">
-                  <label className="field">
-                    <span>Member</span>
-                    <select
-                      value={bookingMemberId}
-                      onChange={(event) => setBookingMemberId(event.target.value)}
-                    >
-                      <option value="">Select a member</option>
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {isAdmin ? (
+                    <label className="field">
+                      <span>Member</span>
+                      <select
+                        value={bookingMemberId}
+                        onChange={(event) => setBookingMemberId(event.target.value)}
+                      >
+                        <option value="">Select a member</option>
+                        {members.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <label className="field">
+                      <span>Member</span>
+                      <input value={currentMember?.name ?? ''} readOnly />
+                    </label>
+                  )}
                   <label className="field">
                     <span>Boat (optional)</span>
                     <select
@@ -1548,7 +1782,7 @@ function App() {
         </div>
       ) : null}
 
-      {editingBoat ? (
+      {session && editingBoat ? (
         <div className="modal-backdrop" onClick={() => setEditingBoat(null)}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
@@ -1707,7 +1941,8 @@ function App() {
         </div>
       ) : null}
 
-      {!showNewBooking &&
+      {session &&
+      !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
       !editingBoat &&

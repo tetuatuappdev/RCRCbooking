@@ -293,7 +293,7 @@ body {
 .boats-table table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 1100px;
 }
 
 .boats-table th,
@@ -302,6 +302,12 @@ body {
   padding: 8px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.3);
   font-size: 0.9rem;
+}
+
+.boats-table th:last-child,
+.boats-table td:last-child {
+  min-width: 320px;
+  white-space: nowrap;
 }
 
 .boats-table tbody tr {
@@ -354,7 +360,7 @@ body {
 }
 
 .templates-mode .gantt-grid {
-  background: rgba(203, 213, 225, 0.75);
+  background: transparent;
 }
 
 .gantt-verticals {
@@ -678,6 +684,11 @@ select:focus {
 }
 
 .booking-pill.template {
+  background: rgba(251, 146, 60, 0.18);
+  border-color: rgba(249, 115, 22, 0.5);
+}
+
+.templates-mode .booking-pill {
   background: rgba(251, 146, 60, 0.18);
   border-color: rgba(249, 115, 22, 0.5);
 }
