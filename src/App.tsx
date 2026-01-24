@@ -103,6 +103,21 @@ const formatHourLabel = (hourValue: number) => {
   const minutes = hourValue % 1 === 0.5 ? '30' : '00'
   return `${String(hours).padStart(2, '0')}:${minutes}`
 }
+const formatDayLabel = (value: string) => {
+  const date = new Date(`${value}T12:00:00`)
+  const day = date.getDate()
+  const suffix =
+    day % 10 === 1 && day !== 11
+      ? 'st'
+      : day % 10 === 2 && day !== 12
+        ? 'nd'
+        : day % 10 === 3 && day !== 13
+          ? 'rd'
+          : 'th'
+  const weekday = date.toLocaleDateString([], { weekday: 'short' })
+  const month = date.toLocaleDateString([], { month: 'short' })
+  return `${weekday} ${day}${suffix} of ${month}`
+}
 const getRelatedName = (
   value: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null | undefined,
 ) => {
@@ -156,6 +171,7 @@ function App() {
   })
   const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
+  const datePickerRef = useRef<HTMLInputElement | null>(null)
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -920,9 +936,15 @@ function App() {
   return (
     <div
       className="app"
-      onPointerDown={() => {
+      onPointerDown={(event) => {
         if (status) {
           setStatus(null)
+        }
+        if (isMenuOpen) {
+          const target = event.target as HTMLElement
+          if (!target.closest('.menu-panel') && !target.closest('.menu-button')) {
+            setIsMenuOpen(false)
+          }
         }
       }}
     >
@@ -1076,14 +1098,19 @@ function App() {
                 >
                   ‹
                 </button>
-                <span className="date-label">
-                  {new Date(`${selectedDate}T12:00:00`).toLocaleDateString([], {
-                    weekday: 'short',
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                  })}
-                </span>
+                <button
+                  className="date-label date-trigger"
+                  type="button"
+                  onClick={() => {
+                    if (datePickerRef.current?.showPicker) {
+                      datePickerRef.current.showPicker()
+                    } else {
+                      datePickerRef.current?.focus()
+                    }
+                  }}
+                >
+                  {formatDayLabel(selectedDate)}
+                </button>
                 <button
                   className="button ghost small"
                   type="button"
@@ -1095,6 +1122,13 @@ function App() {
                 >
                   ›
                 </button>
+                <input
+                  ref={datePickerRef}
+                  className="date-hidden"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) => setSelectedDate(event.target.value)}
+                />
               </div>
             ) : viewMode === 'templates' ? (
               <label className="field compact">

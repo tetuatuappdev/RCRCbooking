@@ -170,8 +170,8 @@ body {
   flex-wrap: wrap;
   padding: 4px 6px;
   background-image: linear-gradient(
-      rgba(15, 23, 42, 0.55),
-      rgba(15, 23, 42, 0.25)
+      rgba(15, 23, 42, 0.25),
+      rgba(15, 23, 42, 0.08)
     ),
     url('/river.png');
   background-size: cover;
@@ -199,7 +199,7 @@ body {
 }
 
 .eyebrow span:last-child {
-  font-size: 0.5em;
+  font-size: 0.75em;
 }
 
 .hero h1 {
@@ -280,6 +280,7 @@ body {
   width: 100%;
   flex: 1;
   min-height: 0;
+  margin-top: -6px;
 }
 
 .boats-table {
@@ -434,6 +435,7 @@ body {
 
 .schedule-top {
   margin-bottom: 0px;
+  margin-top: 6px;
 }
 
 .status-inline {
@@ -450,6 +452,21 @@ body {
 .date-label {
   font-weight: 600;
   color: var(--ink-2);
+}
+
+.date-trigger {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.date-hidden {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
 }
 
 .date-control {
