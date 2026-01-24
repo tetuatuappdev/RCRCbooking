@@ -482,6 +482,10 @@ function App() {
     setBoatPermissions(map)
   }, [])
 
+  const refreshBoatAccess = useCallback(async () => {
+    await Promise.all([fetchBoats(), fetchBoatPermissions()])
+  }, [fetchBoats, fetchBoatPermissions])
+
   const fetchAllowedMembers = useCallback(async () => {
     const { data, error } = await supabase
       .from('allowed_member')
@@ -2105,6 +2109,7 @@ function App() {
                 setEditingBooking(null)
                 setEditingTemplate(null)
                 setShowNewBooking(true)
+                refreshBoatAccess()
                 if (viewMode === 'templates') {
                   setBookingBoatId('')
                   setBookingMemberId('')
@@ -2273,6 +2278,7 @@ function App() {
                     <select
                       value={bookingBoatId}
                       onChange={(event) => setBookingBoatId(event.target.value)}
+                      onFocus={refreshBoatAccess}
                     >
                       <option value="">Select a boat</option>
                       {allowedBoats.map((boat) => (
