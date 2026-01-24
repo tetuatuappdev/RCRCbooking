@@ -1469,7 +1469,7 @@ function App() {
     >
       {updateAvailable ? (
         <div className="update-banner">
-          <span>New version available</span>
+          <span>New version available.</span>
           <button type="button" onClick={() => window.location.reload()}>
             Reload now
           </button>
