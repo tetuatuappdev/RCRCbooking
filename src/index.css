@@ -37,6 +37,8 @@ body {
 
 #root {
   min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .app {
@@ -47,6 +49,7 @@ body {
   max-width: 1200px;
   margin: 0 auto;
   isolation: isolate;
+  overflow-x: hidden;
 }
 
 .app::before,
@@ -149,6 +152,7 @@ body {
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
   width: 100%;
+  max-width: 100%;
 }
 
 .panel-header {
@@ -266,7 +270,7 @@ select:focus {
 
 .fab {
   position: fixed;
-  right: 20px;
+  left: 50%;
   bottom: 20px;
   width: 56px;
   height: 56px;
@@ -284,6 +288,7 @@ select:focus {
   align-items: center;
   justify-content: center;
   touch-action: manipulation;
+  transform: translateX(-50%);
 }
 
 .fab:hover {
@@ -293,6 +298,7 @@ select:focus {
 .schedule {
   display: grid;
   gap: 12px;
+  width: 100%;
 }
 
 .schedule-row {

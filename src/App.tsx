@@ -381,20 +381,22 @@ function App() {
         {error ? <div className="notice error">{error}</div> : null}
       </main>
 
-      {createPortal(
-        <button
-          className="fab"
-          onClick={() => {
-            setEditingBooking(null)
-            setShowNewBooking(true)
-          }}
-          aria-label="New booking"
-          type="button"
-        >
-          +
-        </button>,
-        document.body,
-      )}
+      {!showNewBooking && !editingBooking
+        ? createPortal(
+            <button
+              className="fab"
+              onClick={() => {
+                setEditingBooking(null)
+                setShowNewBooking(true)
+              }}
+              aria-label="New booking"
+              type="button"
+            >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
 
       {showNewBooking || editingBooking ? (
         <div className="modal-backdrop" onClick={resetBookingForm}>
