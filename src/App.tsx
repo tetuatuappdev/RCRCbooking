@@ -1053,7 +1053,10 @@ function App() {
       </div>
       <div className="page-pad">
         <header className="hero">
-          <p className="eyebrow">RCRC Booking Sheet</p>
+          <p className="eyebrow">
+            <span>RCRC</span>
+            <span>Booking Sheet</span>
+          </p>
         </header>
       </div>
 
