@@ -141,6 +141,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [currentMember, setCurrentMember] = useState<Member | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [adminFromAllowlist, setAdminFromAllowlist] = useState<boolean | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [allowedMembers, setAllowedMembers] = useState<
     { id: string; email: string; name: string; is_admin: boolean }[]
@@ -294,6 +295,7 @@ function App() {
     if (!sessionEmail) {
       setCurrentMember(null)
       setIsAdmin(false)
+      setAdminFromAllowlist(null)
       setBookings([])
       setTemplateBookings([])
       setTemplateExceptions([])
@@ -326,6 +328,8 @@ function App() {
         setIsMemberLoading(false)
         return
       }
+      setAdminFromAllowlist(allowed.is_admin)
+      setIsAdmin(allowed.is_admin)
 
       const { data, error } = await supabase
         .from('members')
@@ -397,6 +401,11 @@ function App() {
       return
     }
 
+    if (adminFromAllowlist !== null) {
+      setIsAdmin(adminFromAllowlist)
+      return
+    }
+
     const loadAdminStatus = async () => {
       const { data, error } = await supabase
         .from('admins')
@@ -413,7 +422,7 @@ function App() {
     }
 
     loadAdminStatus()
-  }, [currentMember])
+  }, [adminFromAllowlist, currentMember])
 
   useEffect(() => {
     const url = new URL(window.location.href)
