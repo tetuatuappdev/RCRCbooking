@@ -1275,7 +1275,7 @@ function App() {
                               setEditingBooking(booking as Booking)
                               setEditingTemplate(null)
                               setShowNewBooking(false)
-                              setBookingBoatId(booking.boat_id)
+                              setBookingBoatId(booking.boat_id ?? '')
                               setBookingMemberId(booking.member_id ?? '')
                               setStartTime(formatTimeInput(booking.start_time))
                               setEndTime(formatTimeInput(booking.end_time))
@@ -1461,7 +1461,7 @@ function App() {
                       onChange={(event) => setBookingBoatId(event.target.value)}
                     >
                       <option value="">Select a boat</option>
-                      {(viewMode === 'templates' ? boats : allowedBoats).map((boat) => (
+                      {allowedBoats.map((boat) => (
                         <option key={boat.id} value={boat.id}>
                           {boat.type ? `${boat.type} ${boat.name}` : boat.name}
                         </option>
