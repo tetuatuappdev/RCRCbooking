@@ -64,12 +64,47 @@ create table if not exists admins (
   created_at timestamptz not null default now()
 );
 
+create table if not exists allowed_member (
+  id uuid primary key default gen_random_uuid(),
+  email text unique not null,
+  name text not null,
+  is_admin boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create or replace function handle_allowed_member_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into members (name, email)
+  values (new.name, lower(new.email))
+  on conflict (email) do nothing;
+
+  if new.is_admin then
+    insert into admins (member_id)
+    select id from members where lower(email) = lower(new.email)
+    on conflict do nothing;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists allowed_member_sync on allowed_member;
+create trigger allowed_member_sync
+after insert on allowed_member
+for each row execute function handle_allowed_member_insert();
+
 create index if not exists bookings_boat_time_idx on bookings (boat_id, start_time, end_time);
 
 alter table members enable row level security;
 alter table boats enable row level security;
 alter table bookings enable row level security;
 alter table admins enable row level security;
+alter table allowed_member enable row level security;
 alter table booking_templates enable row level security;
 alter table template_exceptions enable row level security;
 alter table boat_permissions enable row level security;
@@ -77,6 +112,16 @@ alter table boat_permissions enable row level security;
 create policy "Members readable for login" on members
   for select to anon, authenticated
   using (true);
+
+create policy "Members insert for authed" on members
+  for insert to authenticated
+  with check (
+    lower(email) = lower(auth.email())
+    and exists (
+      select 1 from allowed_member
+      where lower(email) = lower(auth.email())
+    )
+  );
 
 create policy "Boats readable for authed" on boats
   for select to authenticated
@@ -200,3 +245,20 @@ create policy "Admins self readable" on admins
   using (
     member_id = (select id from members where email = auth.email())
   );
+
+create policy "Admins insert for authed" on admins
+  for insert to authenticated
+  with check (
+    exists (
+      select 1
+      from allowed_member am
+      join members m on m.id = member_id
+      where m.email = auth.email()
+      and am.email = m.email
+      and am.is_admin = true
+    )
+  );
+
+create policy "Allowed members readable" on allowed_member
+  for select to anon, authenticated
+  using (true);

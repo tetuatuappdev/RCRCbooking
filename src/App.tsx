@@ -148,7 +148,14 @@ function App() {
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
-  const [selectedMemberId, setSelectedMemberId] = useState('')
+  const [authView, setAuthView] = useState<'signin' | 'setPassword'>('signin')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [signupEmail, setSignupEmail] = useState('')
+  const [signupPassword, setSignupPassword] = useState('')
+  const [signupConfirm, setSignupConfirm] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [selectedDate, setSelectedDate] = useState(getTodayString)
   const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
     getWeekdayIndex(getTodayString()),
@@ -178,6 +185,8 @@ function App() {
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
   const datePickerRef = useRef<HTMLInputElement | null>(null)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
+  const [isAuthBusy, setIsAuthBusy] = useState(false)
+  const [isMemberLoading, setIsMemberLoading] = useState(false)
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -193,23 +202,23 @@ function App() {
 
   const skipBackdropClick = useRef(false)
 
-  useEffect(() => {
-    const loadMembers = async () => {
-      const { data, error: membersError } = await supabase
-        .from('members')
-        .select('id, name, email')
-        .order('name', { ascending: true })
+  const fetchMembers = useCallback(async () => {
+    const { data, error: membersError } = await supabase
+      .from('members')
+      .select('id, name, email')
+      .order('name', { ascending: true })
 
-      if (membersError) {
-        setError(membersError.message)
-        return
-      }
-
-      setMembers(data ?? [])
+    if (membersError) {
+      setError(membersError.message)
+      return
     }
 
-    loadMembers()
+    setMembers(data ?? [])
   }, [])
+
+  useEffect(() => {
+    fetchMembers()
+  }, [fetchMembers])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -237,26 +246,92 @@ function App() {
       setShowNewBooking(false)
       setEditingBooking(null)
       setEditingTemplate(null)
+      setIsMemberLoading(false)
       return
     }
 
     const loadCurrentMember = async () => {
+      setIsMemberLoading(true)
       const { data, error } = await supabase
         .from('members')
         .select('id, name, email')
-        .eq('email', session.user.email)
+        .ilike('email', session.user.email)
         .maybeSingle()
 
       if (error) {
         setError(error.message)
+        setIsMemberLoading(false)
         return
       }
 
-      setCurrentMember(data ?? null)
+      if (data) {
+        setCurrentMember(data)
+        setIsMemberLoading(false)
+        return
+      }
+
+      const { data: allowed, error: allowedError } = await supabase
+        .from('allowed_member')
+        .select('email, name, is_admin')
+        .ilike('email', session.user.email)
+        .maybeSingle()
+
+      if (allowedError) {
+        setError(allowedError.message)
+        setIsMemberLoading(false)
+        return
+      }
+
+      if (!allowed) {
+        setCurrentMember(null)
+        setError('Your email is not authorized.')
+        setIsMemberLoading(false)
+        return
+      }
+
+      const { data: createdMember, error: createError } = await supabase
+        .from('members')
+        .insert({
+          name: allowed.name,
+          email: allowed.email?.toLowerCase(),
+        })
+        .select('id, name, email')
+        .single()
+
+      if (createError) {
+        if ((createError as { code?: string }).code === '23505') {
+          const { data: existingMember, error: existingError } = await supabase
+            .from('members')
+            .select('id, name, email')
+            .ilike('email', session.user.email)
+            .maybeSingle()
+          if (existingError) {
+            setError(existingError.message)
+            setIsMemberLoading(false)
+            return
+          }
+          if (existingMember) {
+            setCurrentMember(existingMember)
+            setIsMemberLoading(false)
+            return
+          }
+        }
+        setError(createError.message)
+        setIsMemberLoading(false)
+        return
+      }
+
+      setCurrentMember(createdMember)
+      fetchMembers()
+
+      if (allowed.is_admin) {
+        await supabase.from('admins').insert({ member_id: createdMember.id })
+      }
+      setIsMemberLoading(false)
     }
 
     loadCurrentMember()
-  }, [session])
+  }, [fetchMembers, session])
 
   useEffect(() => {
     if (!currentMember) {
@@ -281,6 +356,38 @@ function App() {
 
     loadAdminStatus()
   }, [currentMember])
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const searchParams = url.searchParams
+    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''))
+    const mode = searchParams.get('mode') || hashParams.get('type')
+
+    if (mode === 'recovery') {
+      setAuthView('setPassword')
+    }
+
+    if (mode === 'signup' || mode === 'login' || hashParams.get('type') === 'signup') {
+      setStatus('Email confirmed. Please sign in.')
+    }
+
+    const code = searchParams.get('code')
+    if (code && mode === 'recovery') {
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) {
+          setError(error.message)
+        }
+      })
+    }
+
+    if (searchParams.has('code') || searchParams.has('mode') || searchParams.has('type')) {
+      searchParams.delete('code')
+      searchParams.delete('mode')
+      searchParams.delete('type')
+      url.hash = ''
+      window.history.replaceState({}, document.title, url.toString())
+    }
+  }, [])
 
   const fetchBoats = useCallback(async () => {
     const { data, error: boatsError } = await supabase
@@ -570,37 +677,142 @@ function App() {
     return Boolean(currentMember && item.member_id === currentMember.id)
   }
 
-  const handleSendLogin = async () => {
+  const handleSignUp = async () => {
     setError(null)
     setStatus(null)
 
-    const selectedMember = members.find((member) => member.id === selectedMemberId)
-    if (!selectedMember) {
-      setError('Select your name to request a login email.')
+    const normalizedEmail = signupEmail.trim().toLowerCase()
+    if (!normalizedEmail || !signupPassword || !signupConfirm) {
+      setError('Enter your email and password twice.')
+      return
+    }
+
+    if (signupPassword !== signupConfirm) {
+      setError('Passwords do not match.')
       return
     }
 
     setIsSendingEmail(true)
-    const { error: loginError } = await supabase.auth.signInWithOtp({
-      email: selectedMember.email,
+
+    const { data: allowed, error: allowedError } = await supabase
+      .from('allowed_member')
+      .select('email')
+      .eq('email', normalizedEmail)
+      .maybeSingle()
+
+    if (allowedError) {
+      setError(allowedError.message)
+      setIsSendingEmail(false)
+      return
+    }
+
+    if (!allowed) {
+      setError('This email is not authorized.')
+      setIsSendingEmail(false)
+      return
+    }
+
+    const { error: signupError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password: signupPassword,
       options: {
-        emailRedirectTo:
-          import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() || window.location.origin,
+        emailRedirectTo: `${import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() || window.location.origin}?mode=login`,
       },
     })
+
     setIsSendingEmail(false)
+
+    if (signupError) {
+      setError(signupError.message)
+      return
+    }
+
+    setStatus(`Confirm your email to finish signup: ${normalizedEmail}.`)
+    setSignupPassword('')
+    setSignupConfirm('')
+  }
+
+  const handlePasswordLogin = async () => {
+    setError(null)
+    setStatus(null)
+    const email = loginEmail.trim().toLowerCase()
+    if (!email || !loginPassword) {
+      setError('Enter your email and password.')
+      return
+    }
+    setIsAuthBusy(true)
+    const { error: loginError } = await supabase.auth.signInWithPassword({
+      email,
+      password: loginPassword,
+    })
+    setIsAuthBusy(false)
 
     if (loginError) {
       setError(loginError.message)
       return
     }
+  }
 
-    setStatus(`Login email sent to ${selectedMember.email}. Check your inbox.`)
+  const handlePasswordReset = async () => {
+    setError(null)
+    setStatus(null)
+    const email = loginEmail.trim().toLowerCase()
+    if (!email) {
+      setError('Enter your email to reset your password.')
+      return
+    }
+    setIsAuthBusy(true)
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() || window.location.origin}?mode=recovery`,
+    })
+    setIsAuthBusy(false)
+
+    if (resetError) {
+      setError(resetError.message)
+      return
+    }
+
+    setStatus(`Password reset email sent to ${email}.`)
+  }
+
+  const handleSetPassword = async () => {
+    setError(null)
+    setStatus(null)
+
+    if (!newPassword || !confirmPassword) {
+      setError('Enter your new password twice.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
+
+    setIsAuthBusy(true)
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword,
+    })
+    setIsAuthBusy(false)
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    setStatus('Password updated. You are logged in.')
+    setAuthView('signin')
+    setNewPassword('')
+    setConfirmPassword('')
+    const url = new URL(window.location.href)
+    url.searchParams.delete('mode')
+    window.history.replaceState({}, document.title, url.toString())
   }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     setStatus('Logged out.')
+    setAuthView('signin')
   }
 
   const openBoatEditor = (boat?: Boat) => {
@@ -1245,7 +1457,7 @@ function App() {
         </header>
       </div>
 
-      {session ? (
+      {session && authView !== 'setPassword' ? (
         <main className="shell">
           <div className="page-pad schedule-top">
             <div className="actions">
@@ -1324,11 +1536,11 @@ function App() {
                   </select>
                 </label>
               ) : null}
-              {status || error || (!currentMember && session) ? (
+              {status || error || (!currentMember && session && !isMemberLoading) ? (
                 <div className="status-inline">
                   {status ? <div className="notice success">{status}</div> : null}
                   {error ? <div className="notice error">{error}</div> : null}
-                  {!currentMember && session ? (
+                  {!currentMember && session && !isMemberLoading ? (
                     <div className="notice error">Your account is not linked to a member.</div>
                   ) : null}
                 </div>
@@ -1519,32 +1731,98 @@ function App() {
           <section className="panel login-panel">
             <div className="panel-header">
               <h2>Login</h2>
-              <p>Select your name to receive a magic login email.</p>
+              <p>Use your email to sign in or request access.</p>
             </div>
-            <div className="form-grid">
-              <label className="field">
-                <span>Name</span>
-                <select
-                  value={selectedMemberId}
-                  onChange={(event) => setSelectedMemberId(event.target.value)}
-                >
-                  <option value="">Select your name</option>
-                  {members.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="button primary"
-                type="button"
-                onClick={handleSendLogin}
-                disabled={isSendingEmail}
-              >
-                {isSendingEmail ? 'Sending email...' : 'Send login email'}
-              </button>
-            </div>
+            {authView === 'setPassword' ? (
+              <div className="form-grid">
+                <label className="field">
+                  <span>New password</span>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Confirm password</span>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                  />
+                </label>
+                <button className="button primary" type="button" onClick={handleSetPassword}>
+                  {isAuthBusy ? 'Saving...' : 'Set password'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Password</span>
+                    <input
+                      type="password"
+                      value={loginPassword}
+                      onChange={(event) => setLoginPassword(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handlePasswordLogin}
+                    disabled={isAuthBusy}
+                  >
+                    {isAuthBusy ? 'Signing in...' : 'Sign in'}
+                  </button>
+                  <button className="button ghost" type="button" onClick={handlePasswordReset}>
+                    Forgot password
+                  </button>
+                </div>
+                <div className="divider" />
+                <div className="form-grid">
+                  <label className="field">
+                    <span>First time? Email</span>
+                    <input
+                      type="email"
+                      value={signupEmail}
+                      onChange={(event) => setSignupEmail(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Create password</span>
+                    <input
+                      type="password"
+                      value={signupPassword}
+                      onChange={(event) => setSignupPassword(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Confirm password</span>
+                    <input
+                      type="password"
+                      value={signupConfirm}
+                      onChange={(event) => setSignupConfirm(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={handleSignUp}
+                    disabled={isSendingEmail}
+                  >
+                    {isSendingEmail ? 'Sending email...' : 'Create account'}
+                  </button>
+                </div>
+              </>
+            )}
             {status || error ? (
               <div className="status-inline">
                 {status ? <div className="notice success">{status}</div> : null}

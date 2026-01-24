@@ -455,6 +455,13 @@ body {
   border-radius: 10px;
 }
 
+.divider {
+  height: 1px;
+  background: var(--stroke);
+  margin: 12px 0;
+  width: 100%;
+}
+
 .date-label {
   font-weight: 600;
   color: var(--ink-2);
