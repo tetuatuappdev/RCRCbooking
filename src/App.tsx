@@ -453,7 +453,7 @@ function App() {
               <button className="button primary" onClick={handleSaveBooking}>
                 {editingBooking ? 'Save changes' : 'Validate booking'}
               </button>
-              {editingBooking && canEditBooking(editingBooking) ? (
+              {editingBooking ? (
                 <button className="button ghost danger" onClick={handleDeleteBooking}>
                   Delete booking
                 </button>
