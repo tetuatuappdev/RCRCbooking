@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabaseClient'
 
@@ -82,6 +82,7 @@ function App() {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const skipBackdropClick = useRef(false)
 
   useEffect(() => {
     const loadMembers = async () => {
@@ -308,12 +309,14 @@ function App() {
 
   return (
     <div className="app">
-      <header className="hero">
-        <p className="eyebrow">RCRC Booking</p>
-      </header>
+      <div className="page-pad">
+        <header className="hero">
+          <p className="eyebrow">RCRC Booking</p>
+        </header>
+      </div>
 
       <main className="shell">
-        <section className="panel schedule-panel">
+        <section className="panel schedule-panel full-bleed-right">
           <div className="panel-header">
             <div className="actions">
               <label className="field compact">
@@ -330,55 +333,59 @@ function App() {
             {isLoading ? (
               <p className="empty-state">Loading schedule...</p>
             ) : (
-              hourlySchedule.map(({ hour, items }) => (
-                <div key={hour} className="schedule-row">
-                  <div className="schedule-hour">
-                    {String(hour).padStart(2, '0')}:00
+                hourlySchedule.map(({ hour, items }) => (
+                  <div key={hour} className="schedule-row">
+                    <div className="schedule-hour">
+                      {String(hour).padStart(2, '0')}:00
+                    </div>
+                    <div className="schedule-items">
+                      {items.length === 0 ? (
+                        <span className="slot-empty">Free</span>
+                      ) : (
+                        items.map((booking) => {
+                          const boatName = getRelatedName(booking.boats) ?? 'Boat'
+                          const boatType = getRelatedType(booking.boats)
+                          const memberName = getRelatedName(booking.members) ?? 'Member'
+                          return (
+                            <button
+                              key={booking.id}
+                              type="button"
+                              className="booking-pill"
+                              onClick={() => {
+                                setEditingBooking(booking)
+                                setShowNewBooking(false)
+                                setBookingBoatId(booking.boat_id)
+                                setBookingMemberId(booking.member_id ?? '')
+                                setStartTime(formatTimeInput(booking.start_time))
+                                setEndTime(formatTimeInput(booking.end_time))
+                              }}
+                            >
+                              <div>
+                                <strong>
+                                  {boatType ? `${boatType} ${boatName}` : boatName}
+                                </strong>
+                                <span>{memberName}</span>
+                              </div>
+                              <span className="booking-time">
+                                {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
+                              </span>
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
                   </div>
-                  <div className="schedule-items">
-                    {items.length === 0 ? (
-                      <span className="slot-empty">Free</span>
-                    ) : (
-                      items.map((booking) => {
-                        const boatName = getRelatedName(booking.boats) ?? 'Boat'
-                        const boatType = getRelatedType(booking.boats)
-                        const memberName = getRelatedName(booking.members) ?? 'Member'
-                        return (
-                          <button
-                            key={booking.id}
-                            type="button"
-                            className="booking-pill"
-                            onClick={() => {
-                              setEditingBooking(booking)
-                              setShowNewBooking(false)
-                              setBookingBoatId(booking.boat_id)
-                              setBookingMemberId(booking.member_id ?? '')
-                              setStartTime(formatTimeInput(booking.start_time))
-                              setEndTime(formatTimeInput(booking.end_time))
-                            }}
-                          >
-                            <div>
-                              <strong>
-                                {boatType ? `${boatType} ${boatName}` : boatName}
-                              </strong>
-                              <span>{memberName}</span>
-                            </div>
-                            <span className="booking-time">
-                              {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
-                            </span>
-                          </button>
-                        )
-                      })
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
+                ))
+              )}
           </div>
         </section>
 
-        {status ? <div className="notice success">{status}</div> : null}
-        {error ? <div className="notice error">{error}</div> : null}
+        {status || error ? (
+          <div className="page-pad">
+            {status ? <div className="notice success">{status}</div> : null}
+            {error ? <div className="notice error">{error}</div> : null}
+          </div>
+        ) : null}
       </main>
 
       {!showNewBooking && !editingBooking
@@ -386,8 +393,12 @@ function App() {
             <button
               className="fab"
               onClick={() => {
+                skipBackdropClick.current = true
                 setEditingBooking(null)
                 setShowNewBooking(true)
+                setTimeout(() => {
+                  skipBackdropClick.current = false
+                }, 0)
               }}
               aria-label="New booking"
               type="button"
@@ -399,7 +410,15 @@ function App() {
         : null}
 
       {showNewBooking || editingBooking ? (
-        <div className="modal-backdrop" onClick={resetBookingForm}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (skipBackdropClick.current) {
+              return
+            }
+            resetBookingForm()
+          }}
+        >
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingBooking ? 'Edit booking' : 'New booking'}</h3>
