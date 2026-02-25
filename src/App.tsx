@@ -178,7 +178,7 @@ function App() {
     getWeekdayIndex(getTodayString()),
   )
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
-  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats' | 'access'>(
+  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats' | 'access' | 'profile'>(
     'schedule',
   )
 
@@ -212,7 +212,6 @@ function App() {
   const [pushSupported, setPushSupported] = useState(false)
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
-  const [pushTestBusy, setPushTestBusy] = useState(false)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -960,46 +959,6 @@ function App() {
     },
     [getAccessToken],
   )
-
-  const sendTestPush = useCallback(async () => {
-    setPushTestBusy(true)
-    setError(null)
-    setStatus(null)
-    try {
-      const token = await getAccessToken()
-      if (!token) {
-        setError('You must be signed in to send a test notification.')
-        return
-      }
-
-      const response = await fetch('/api/push/test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({}),
-      })
-
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: string; sent?: number }
-        | null
-
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Failed to send test notification.')
-      }
-
-      setStatus(
-        typeof payload?.sent === 'number'
-          ? `Test notification sent (${payload.sent}).`
-          : 'Test notification sent.',
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send test notification.')
-    } finally {
-      setPushTestBusy(false)
-    }
-  }, [getAccessToken])
 
   const handleSignUp = async () => {
     setError(null)
@@ -1816,39 +1775,6 @@ function App() {
                 >
                   Outing Risk Assessment
                 </button>
-                {pushSupported ? (
-                  <button
-                    className="menu-item"
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false)
-                      if (pushEnabled) {
-                        unsubscribeFromPush()
-                      } else {
-                        subscribeToPush()
-                      }
-                    }}
-                  >
-                    {pushBusy
-                      ? 'Working...'
-                      : pushEnabled
-                        ? 'Disable notifications'
-                        : 'Enable notifications'}
-                  </button>
-                ) : null}
-                {pushSupported && pushEnabled ? (
-                  <button
-                    className="menu-item"
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false)
-                      sendTestPush()
-                    }}
-                    disabled={pushTestBusy}
-                  >
-                    {pushTestBusy ? 'Sending test...' : 'Send test notification'}
-                  </button>
-                ) : null}
                 {isAdmin ? (
                   <>
                     <button
@@ -1912,10 +1838,13 @@ function App() {
                   type="button"
                   onClick={() => {
                     setIsMenuOpen(false)
-                    handleLogout()
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setViewMode('profile')
                   }}
                 >
-                  Logout
+                  Profile
                 </button>
               </div>
             </>
@@ -2027,7 +1956,58 @@ function App() {
               viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
             }`}
           >
-            {viewMode === 'access' ? (
+            {viewMode === 'profile' ? (
+              <div className="page-pad">
+                <section className="panel login-panel auth-card single">
+                  <div className="auth-form">
+                    <div className="panel-header">
+                      <h2>Profile</h2>
+                    </div>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Name</span>
+                        <input value={currentMember?.name ?? 'Unknown'} readOnly />
+                      </label>
+                      <label className="field">
+                        <span>Email</span>
+                        <input value={currentMember?.email ?? session.user.email ?? ''} readOnly />
+                      </label>
+                      <label className="field">
+                        <span>Role</span>
+                        <input value={isAdmin ? 'Admin' : 'Member'} readOnly />
+                      </label>
+                      {pushSupported ? (
+                        <button
+                          className="button primary"
+                          type="button"
+                          onClick={() => {
+                            if (pushEnabled) {
+                              unsubscribeFromPush()
+                            } else {
+                              subscribeToPush()
+                            }
+                          }}
+                          disabled={pushBusy}
+                        >
+                          {pushBusy
+                            ? 'Working...'
+                            : pushEnabled
+                              ? 'Disable notifications'
+                              : 'Enable notifications'}
+                        </button>
+                      ) : (
+                        <p className="helper">
+                          Push notifications are not supported in this browser.
+                        </p>
+                      )}
+                      <button className="button ghost danger" type="button" onClick={handleLogout}>
+                        Logout
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            ) : viewMode === 'access' ? (
               <div className="access-table">
                 <table>
                   <thead>
@@ -2403,7 +2383,8 @@ function App() {
       !editingBooking &&
       !editingTemplate &&
       viewMode !== 'boats' &&
-      viewMode !== 'access'
+      viewMode !== 'access' &&
+      viewMode !== 'profile'
         ? createPortal(
             <button
               className="fab"
