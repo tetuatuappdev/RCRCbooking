@@ -64,7 +64,13 @@ export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET
   if (secret) {
     const header = req.headers['x-cron-secret']
-    if (header !== secret) {
+    const querySecret =
+      typeof req.query?.secret === 'string'
+        ? req.query.secret
+        : Array.isArray(req.query?.secret)
+          ? req.query.secret[0]
+          : null
+    if (header !== secret && querySecret !== secret) {
       res.status(401).json({ error: 'Unauthorized.' })
       return
     }
