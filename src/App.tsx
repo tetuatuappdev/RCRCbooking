@@ -212,6 +212,7 @@ function App() {
   const [pushSupported, setPushSupported] = useState(false)
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
+  const [pushTestBusy, setPushTestBusy] = useState(false)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -959,6 +960,46 @@ function App() {
     },
     [getAccessToken],
   )
+
+  const sendTestPush = useCallback(async () => {
+    setPushTestBusy(true)
+    setError(null)
+    setStatus(null)
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        setError('You must be signed in to send a test notification.')
+        return
+      }
+
+      const response = await fetch('/api/push/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
+      })
+
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; sent?: number }
+        | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to send test notification.')
+      }
+
+      setStatus(
+        typeof payload?.sent === 'number'
+          ? `Test notification sent (${payload.sent}).`
+          : 'Test notification sent.',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send test notification.')
+    } finally {
+      setPushTestBusy(false)
+    }
+  }, [getAccessToken])
 
   const handleSignUp = async () => {
     setError(null)
@@ -1793,6 +1834,19 @@ function App() {
                       : pushEnabled
                         ? 'Disable notifications'
                         : 'Enable notifications'}
+                  </button>
+                ) : null}
+                {pushSupported && pushEnabled ? (
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      sendTestPush()
+                    }}
+                    disabled={pushTestBusy}
+                  >
+                    {pushTestBusy ? 'Sending test...' : 'Send test notification'}
                   </button>
                 ) : null}
                 {isAdmin ? (
