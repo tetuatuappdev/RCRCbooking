@@ -11,6 +11,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false,
+    // Needed for password reset links so updateUser has a session.
+    detectSessionInUrl: true,
   },
 })
