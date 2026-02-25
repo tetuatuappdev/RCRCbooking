@@ -76,7 +76,7 @@ export default async function handler(req, res) {
     }
   }
 
-  if (req.method !== 'POST' && req.method !== 'GET') {
+  if (req.method !== 'POST' && req.method !== 'GET' && req.method !== 'HEAD') {
     res.status(405).json({ error: 'Method not allowed.' })
     return
   }
@@ -97,6 +97,10 @@ export default async function handler(req, res) {
   }
 
   if (!bookings || bookings.length === 0) {
+    if (req.method === 'HEAD') {
+      res.status(200).end()
+      return
+    }
     res.status(200).json({ ok: true, sent: 0 })
     return
   }
@@ -128,6 +132,11 @@ export default async function handler(req, res) {
     })
 
     sent += 1
+  }
+
+  if (req.method === 'HEAD') {
+    res.status(200).end()
+    return
   }
 
   res.status(200).json({ ok: true, sent })
