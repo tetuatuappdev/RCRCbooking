@@ -137,6 +137,17 @@ const getRelatedType = (
   return Array.isArray(value) ? value[0]?.type ?? null : value.type ?? null
 }
 
+const urlBase64ToUint8Array = (value: string) => {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4)
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = window.atob(base64)
+  const output = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) {
+    output[i] = raw.charCodeAt(i)
+  }
+  return output
+}
+
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [currentMember, setCurrentMember] = useState<Member | null>(null)
@@ -198,6 +209,9 @@ function App() {
   const [isAuthBusy, setIsAuthBusy] = useState(false)
   const [isMemberLoading, setIsMemberLoading] = useState(false)
   const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [pushSupported, setPushSupported] = useState(false)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -291,6 +305,22 @@ function App() {
       subscription.unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    const supported = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
+    setPushSupported(supported)
+    if (!supported || !session) {
+      setPushEnabled(false)
+      return
+    }
+
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => setPushEnabled(Boolean(subscription)))
+      .catch(() => {
+        setPushEnabled(false)
+      })
+  }, [session])
 
   useEffect(() => {
     const sessionEmail = session?.user?.email
@@ -787,6 +817,148 @@ function App() {
     }
     return Boolean(currentMember && item.member_id === currentMember.id)
   }
+
+  const getAccessToken = useCallback(async () => {
+    const { data } = await supabase.auth.getSession()
+    return data.session?.access_token ?? null
+  }, [])
+
+  const subscribeToPush = useCallback(async () => {
+    if (!pushSupported) {
+      setError('Push notifications are not supported in this browser.')
+      return
+    }
+
+    const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined
+    if (!vapidPublicKey) {
+      setError('Missing VAPID public key.')
+      return
+    }
+
+    setPushBusy(true)
+    setError(null)
+    setStatus(null)
+
+    try {
+      const permission =
+        Notification.permission === 'default'
+          ? await Notification.requestPermission()
+          : Notification.permission
+
+      if (permission !== 'granted') {
+        setError('Notification permission was not granted.')
+        setPushBusy(false)
+        return
+      }
+
+      const registration = await navigator.serviceWorker.ready
+      const existing = await registration.pushManager.getSubscription()
+      const subscription =
+        existing ??
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        }))
+
+      const token = await getAccessToken()
+      if (!token) {
+        setError('You must be signed in to enable notifications.')
+        setPushBusy(false)
+        return
+      }
+
+      const response = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subscription: subscription.toJSON ? subscription.toJSON() : subscription,
+          userAgent: navigator.userAgent,
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        throw new Error(payload?.error || 'Failed to save subscription.')
+      }
+
+      setPushEnabled(true)
+      setStatus('Notifications enabled.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to enable notifications.'
+      setError(message)
+    } finally {
+      setPushBusy(false)
+    }
+  }, [getAccessToken, pushSupported])
+
+  const unsubscribeFromPush = useCallback(async () => {
+    if (!pushSupported) {
+      return
+    }
+
+    setPushBusy(true)
+    setError(null)
+    setStatus(null)
+
+    try {
+      const registration = await navigator.serviceWorker.ready
+      const subscription = await registration.pushManager.getSubscription()
+      if (!subscription) {
+        setPushEnabled(false)
+        setPushBusy(false)
+        return
+      }
+
+      const token = await getAccessToken()
+      if (token) {
+        await fetch('/api/push/unsubscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        })
+      }
+
+      await subscription.unsubscribe()
+      setPushEnabled(false)
+      setStatus('Notifications disabled.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to disable notifications.'
+      setError(message)
+    } finally {
+      setPushBusy(false)
+    }
+  }, [getAccessToken, pushSupported])
+
+  const notifyBookingCreated = useCallback(
+    async (bookingIds: string[]) => {
+      if (bookingIds.length === 0) {
+        return
+      }
+      try {
+        const token = await getAccessToken()
+        if (!token) {
+          return
+        }
+        await fetch('/api/push/notify-booking', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ bookingIds }),
+        })
+      } catch {
+        // Ignore notification errors.
+      }
+    },
+    [getAccessToken],
+  )
 
   const handleSignUp = async () => {
     setError(null)
@@ -1329,13 +1501,19 @@ function App() {
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
       }))
-      const { error: insertError } = await supabase.from('bookings').insert(inserts)
+      const { data: inserted, error: insertError } = await supabase
+        .from('bookings')
+        .insert(inserts)
+        .select('id')
 
       if (insertError) {
         setError(insertError.message)
         return
       }
       setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
+      if (inserted && inserted.length > 0) {
+        notifyBookingCreated(inserted.map((row) => row.id))
+      }
     }
 
     resetBookingForm()
@@ -1597,6 +1775,26 @@ function App() {
                 >
                   Outing Risk Assessment
                 </button>
+                {pushSupported ? (
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      if (pushEnabled) {
+                        unsubscribeFromPush()
+                      } else {
+                        subscribeToPush()
+                      }
+                    }}
+                  >
+                    {pushBusy
+                      ? 'Working...'
+                      : pushEnabled
+                        ? 'Disable notifications'
+                        : 'Enable notifications'}
+                  </button>
+                ) : null}
                 {isAdmin ? (
                   <>
                     <button

@@ -298,3 +298,46 @@ create policy "Allowed members delete for authed" on allowed_member
       where member_id = (select id from members where email = auth.email())
     )
   );
+
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  member_id uuid not null references members(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists booking_reminders (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null references bookings(id) on delete cascade,
+  remind_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  unique (booking_id, remind_at)
+);
+
+create index if not exists push_subscriptions_member_idx on push_subscriptions (member_id);
+create index if not exists booking_reminders_booking_idx on booking_reminders (booking_id);
+
+alter table push_subscriptions enable row level security;
+alter table booking_reminders enable row level security;
+
+create policy "Push subscriptions readable for authed" on push_subscriptions
+  for select to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+  );
+
+create policy "Push subscriptions insert for authed" on push_subscriptions
+  for insert to authenticated
+  with check (
+    member_id = (select id from members where email = auth.email())
+  );
+
+create policy "Push subscriptions delete for authed" on push_subscriptions
+  for delete to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+  );
