@@ -1669,11 +1669,7 @@ function App() {
     }
 
     const requestedRole = accessForm.role
-    if (
-      (isAdmin && requestedRole === 'guest') ||
-      (isCoordinator && requestedRole !== 'guest') ||
-      (!isAdmin && !isCoordinator)
-    ) {
+    if ((isCoordinator && requestedRole !== 'guest') || (!isAdmin && !isCoordinator)) {
       setError('You are not allowed to create this type of user.')
       return
     }
@@ -2984,6 +2980,7 @@ function App() {
                   {isAdmin ? (
                     <>
                       <option value="coordinator">Coordinator</option>
+                      <option value="guest">Guest</option>
                       <option value="admin">Admin</option>
                     </>
                   ) : (

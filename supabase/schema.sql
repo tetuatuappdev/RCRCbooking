@@ -362,7 +362,7 @@ create policy "Allowed members insert for authed" on allowed_member
         select 1 from admins
         where member_id = (select id from members where email = auth.email())
       )
-      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator', 'guest')
     )
     or (
       exists (
