@@ -60,6 +60,8 @@ type BoatPermission = {
   member_id: string
 }
 
+type UserRole = 'admin' | 'coordinator' | 'guest'
+
 type ScheduleItem = {
   id: string
   boat_id: string | null
@@ -151,11 +153,12 @@ const urlBase64ToUint8Array = (value: string) => {
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [currentMember, setCurrentMember] = useState<Member | null>(null)
+  const [userRole, setUserRole] = useState<UserRole>('guest')
   const [isAdmin, setIsAdmin] = useState(false)
-  const [adminFromAllowlist, setAdminFromAllowlist] = useState<boolean | null>(null)
+  const [roleFromAllowlist, setRoleFromAllowlist] = useState<UserRole | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [allowedMembers, setAllowedMembers] = useState<
-    { id: string; email: string; name: string; is_admin: boolean }[]
+    { id: string; email: string; name: string; role?: UserRole | null; is_admin: boolean }[]
   >([])
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -216,12 +219,15 @@ function App() {
   const [accessForm, setAccessForm] = useState({
     email: '',
     name: '',
-    is_admin: false,
+    role: 'guest' as UserRole,
   })
 
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const isCoordinator = userRole === 'coordinator'
+  const isGuest = userRole === 'guest'
+  const canManageAccess = isAdmin || isCoordinator
 
   useEffect(() => {
     if (!__BUILD_ID__) {
@@ -326,8 +332,9 @@ function App() {
     const sessionEmail = session?.user?.email
     if (!sessionEmail) {
       setCurrentMember(null)
+      setUserRole('guest')
       setIsAdmin(false)
-      setAdminFromAllowlist(null)
+      setRoleFromAllowlist(null)
       setBookings([])
       setTemplateBookings([])
       setTemplateExceptions([])
@@ -342,7 +349,7 @@ function App() {
       setIsMemberLoading(true)
       const { data: allowed, error: allowedError } = await supabase
         .from('allowed_member')
-        .select('email, name, is_admin')
+        .select('email, name, role, is_admin')
         .ilike('email', sessionEmail)
         .maybeSingle()
 
@@ -354,14 +361,22 @@ function App() {
 
       if (!allowed) {
         setCurrentMember(null)
+        setUserRole('guest')
         setError('Your email is not authorized.')
         await supabase.auth.signOut({ scope: 'local' })
         setAuthView('signin')
         setIsMemberLoading(false)
         return
       }
-      setAdminFromAllowlist(allowed.is_admin)
-      setIsAdmin(allowed.is_admin)
+      const resolvedRole: UserRole =
+        allowed.role === 'admin' || allowed.role === 'coordinator' || allowed.role === 'guest'
+          ? allowed.role
+          : allowed.is_admin
+            ? 'admin'
+            : 'coordinator'
+      setRoleFromAllowlist(resolvedRole)
+      setUserRole(resolvedRole)
+      setIsAdmin(resolvedRole === 'admin')
 
       const { data, error } = await supabase
         .from('members')
@@ -418,7 +433,7 @@ function App() {
       setCurrentMember(createdMember)
       fetchMembers()
 
-      if (allowed.is_admin) {
+      if (resolvedRole === 'admin') {
         await supabase.from('admins').insert({ member_id: createdMember.id })
       }
       setIsMemberLoading(false)
@@ -429,12 +444,14 @@ function App() {
 
   useEffect(() => {
     if (!currentMember) {
+      setUserRole('guest')
       setIsAdmin(false)
       return
     }
 
-    if (adminFromAllowlist !== null) {
-      setIsAdmin(adminFromAllowlist)
+    if (roleFromAllowlist !== null) {
+      setUserRole(roleFromAllowlist)
+      setIsAdmin(roleFromAllowlist === 'admin')
       return
     }
 
@@ -450,11 +467,13 @@ function App() {
         return
       }
 
-      setIsAdmin(Boolean(data))
+      const nextRole: UserRole = data ? 'admin' : 'coordinator'
+      setUserRole(nextRole)
+      setIsAdmin(nextRole === 'admin')
     }
 
     loadAdminStatus()
-  }, [adminFromAllowlist, currentMember])
+  }, [currentMember, roleFromAllowlist])
 
   useEffect(() => {
     const url = new URL(window.location.href)
@@ -530,7 +549,7 @@ function App() {
   const fetchAllowedMembers = useCallback(async () => {
     const { data, error } = await supabase
       .from('allowed_member')
-      .select('id, email, name, is_admin')
+      .select('id, email, name, role, is_admin')
       .order('name', { ascending: true })
 
     if (error) {
@@ -538,7 +557,17 @@ function App() {
       return
     }
 
-    setAllowedMembers(data ?? [])
+    setAllowedMembers(
+      (data ?? []).map((row) => ({
+        ...row,
+        role:
+          row.role === 'admin' || row.role === 'coordinator' || row.role === 'guest'
+            ? row.role
+            : row.is_admin
+              ? 'admin'
+              : 'coordinator',
+      })),
+    )
   }, [])
 
   const filteredBoats = useMemo(() => {
@@ -598,16 +627,16 @@ function App() {
   }, [fetchBoatPermissions])
 
   useEffect(() => {
-    if (viewMode === 'access' && isAdmin) {
+    if (viewMode === 'access' && canManageAccess) {
       fetchAllowedMembers()
     }
-  }, [fetchAllowedMembers, isAdmin, viewMode])
+  }, [canManageAccess, fetchAllowedMembers, viewMode])
 
   useEffect(() => {
-    if (!isAdmin && (viewMode === 'templates' || viewMode === 'access')) {
+    if ((viewMode === 'templates' && !isAdmin) || (viewMode === 'access' && !canManageAccess)) {
       setViewMode('schedule')
     }
-  }, [isAdmin, viewMode])
+  }, [canManageAccess, isAdmin, viewMode])
 
   useEffect(() => {
     if (currentMember && !isAdmin && viewMode === 'schedule') {
@@ -805,6 +834,9 @@ function App() {
   }
 
   const canEditBooking = (booking: { member_id: string | null }) => {
+    if (isGuest) {
+      return false
+    }
     if (isAdmin) {
       return true
     }
@@ -812,6 +844,9 @@ function App() {
   }
 
   const canEditTemplate = (item: { member_id: string | null }) => {
+    if (isGuest) {
+      return false
+    }
     if (isAdmin) {
       return true
     }
@@ -1362,6 +1397,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (isGuest) {
+      setError('Guests have read-only access.')
+      return
+    }
+
     const selectedBoatIds = editingBooking
       ? bookingBoatId
         ? [bookingBoatId]
@@ -1616,6 +1656,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (!canManageAccess) {
+      setError('You do not have permission to manage access.')
+      return
+    }
+
     const email = accessForm.email.trim().toLowerCase()
     const name = accessForm.name.trim()
     if (!email || !name) {
@@ -1623,10 +1668,21 @@ function App() {
       return
     }
 
+    const requestedRole = accessForm.role
+    if (
+      (isAdmin && requestedRole === 'guest') ||
+      (isCoordinator && requestedRole !== 'guest') ||
+      (!isAdmin && !isCoordinator)
+    ) {
+      setError('You are not allowed to create this type of user.')
+      return
+    }
+
     const { error } = await supabase.from('allowed_member').insert({
       email,
       name,
-      is_admin: accessForm.is_admin,
+      role: requestedRole,
+      is_admin: requestedRole === 'admin',
     })
 
     if (error) {
@@ -1635,12 +1691,16 @@ function App() {
     }
 
     setStatus('Access added.')
-    setAccessForm({ email: '', name: '', is_admin: false })
+    setAccessForm({ email: '', name: '', role: isCoordinator ? 'guest' : 'coordinator' })
     setShowAccessEditor(false)
     fetchAllowedMembers()
   }
 
-  const handleDeleteAccess = async (member: { email: string }) => {
+  const handleDeleteAccess = async (member: { email: string; role?: UserRole | null; is_admin?: boolean }) => {
+    if (!isAdmin) {
+      setError('Only admins can remove access.')
+      return
+    }
     const confirmDelete = window.confirm('Remove this user access?')
     if (!confirmDelete) {
       return
@@ -1818,6 +1878,35 @@ function App() {
                       Manage Accesses
                     </button>
                   </>
+                ) : isCoordinator ? (
+                  <>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('access')
+                      }}
+                    >
+                      Manage Accesses
+                    </button>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('boats')
+                      }}
+                    >
+                      See boat list
+                    </button>
+                  </>
                 ) : (
                   <button
                     className="menu-item"
@@ -1974,7 +2063,16 @@ function App() {
                       </label>
                       <label className="field">
                         <span>Role</span>
-                        <input value={isAdmin ? 'Admin' : 'Member'} readOnly />
+                        <input
+                          value={
+                            userRole === 'admin'
+                              ? 'Admin'
+                              : userRole === 'coordinator'
+                                ? 'Coordinator'
+                                : 'Guest'
+                          }
+                          readOnly
+                        />
                       </label>
                       {pushSupported ? (
                         <button
@@ -2023,15 +2121,23 @@ function App() {
                       <tr key={member.id}>
                         <td>{member.name}</td>
                         <td>{member.email}</td>
-                        <td>{member.is_admin ? 'Admin' : 'Member'}</td>
                         <td>
-                          <button
-                            className="button ghost danger small"
-                            type="button"
-                            onClick={() => handleDeleteAccess(member)}
-                          >
-                            Remove
-                          </button>
+                          {member.role === 'admin'
+                            ? 'Admin'
+                            : member.role === 'guest'
+                              ? 'Guest'
+                              : 'Coordinator'}
+                        </td>
+                        <td>
+                          {isAdmin ? (
+                            <button
+                              className="button ghost danger small"
+                              type="button"
+                              onClick={() => handleDeleteAccess(member)}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -2378,7 +2484,7 @@ function App() {
       )}
 
       {session &&
-      (isAdmin || currentMember) &&
+      (isAdmin || (currentMember && !isGuest)) &&
       !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
@@ -2864,15 +2970,26 @@ function App() {
                   }
                 />
               </label>
-              <label className="field checkbox">
-                <input
-                  type="checkbox"
-                  checked={accessForm.is_admin}
+              <label className="field">
+                <span>Role</span>
+                <select
+                  value={accessForm.role}
                   onChange={(event) =>
-                    setAccessForm((prev) => ({ ...prev, is_admin: event.target.checked }))
+                    setAccessForm((prev) => ({
+                      ...prev,
+                      role: event.target.value as UserRole,
+                    }))
                   }
-                />
-                <span>Admin access</span>
+                >
+                  {isAdmin ? (
+                    <>
+                      <option value="coordinator">Coordinator</option>
+                      <option value="admin">Admin</option>
+                    </>
+                  ) : (
+                    <option value="guest">Guest</option>
+                  )}
+                </select>
               </label>
             </div>
             <div className="modal-actions">
@@ -2913,13 +3030,17 @@ function App() {
       !editingTemplate &&
       !editingBoat &&
       viewMode === 'access' &&
-      isAdmin
+      canManageAccess
         ? createPortal(
             <button
               className="fab"
               onClick={() => {
                 setShowAccessEditor(true)
-                setAccessForm({ email: '', name: '', is_admin: false })
+                setAccessForm({
+                  email: '',
+                  name: '',
+                  role: isCoordinator ? 'guest' : 'coordinator',
+                })
               }}
               aria-label="New access"
               type="button"

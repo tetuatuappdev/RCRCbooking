@@ -68,9 +68,30 @@ create table if not exists allowed_member (
   id uuid primary key default gen_random_uuid(),
   email text unique not null,
   name text not null,
+  role text not null default 'coordinator' check (role in ('admin', 'coordinator', 'guest')),
   is_admin boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table allowed_member add column if not exists role text;
+update allowed_member
+set role = case when is_admin then 'admin' else 'coordinator' end
+where role is null;
+alter table allowed_member alter column role set default 'coordinator';
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'allowed_member_role_check'
+  ) then
+    alter table allowed_member
+      add constraint allowed_member_role_check
+      check (role in ('admin', 'coordinator', 'guest'));
+  end if;
+end
+$$;
+alter table allowed_member alter column role set not null;
 
 create or replace function handle_allowed_member_insert()
 returns trigger
@@ -83,7 +104,7 @@ begin
   values (new.name, lower(new.email))
   on conflict (email) do nothing;
 
-  if new.is_admin then
+  if coalesce(new.role, case when new.is_admin then 'admin' else 'coordinator' end) = 'admin' then
     insert into admins (member_id)
     select id from members where lower(email) = lower(new.email)
     on conflict do nothing;
@@ -147,10 +168,18 @@ create policy "Templates readable for authed" on booking_templates
 create policy "Templates delete for authed" on booking_templates
   for delete to authenticated
   using (
-    member_id = (select id from members where email = auth.email())
-    or exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    and (
+      member_id = (select id from members where email = auth.email())
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
     )
   );
 
@@ -164,6 +193,12 @@ create policy "Template exceptions insert for authed" on template_exceptions
     exists (
       select 1 from booking_templates bt
       where bt.id = template_id
+      and exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+      )
       and (
         bt.member_id = (select id from members where email = auth.email())
         or exists (
@@ -180,6 +215,12 @@ create policy "Template exceptions delete for authed" on template_exceptions
     exists (
       select 1 from booking_templates bt
       where bt.id = template_id
+      and exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+      )
       and (
         bt.member_id = (select id from members where email = auth.email())
         or exists (
@@ -215,37 +256,69 @@ create policy "Boat permissions delete for authed" on boat_permissions
 create policy "Bookings insert for authed" on bookings
   for insert to authenticated
   with check (
-    member_id = (select id from members where email = auth.email())
-    or exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    and (
+      member_id = (select id from members where email = auth.email())
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
     )
   );
 
 create policy "Bookings update for authed" on bookings
   for update to authenticated
   using (
-    member_id = (select id from members where email = auth.email())
-    or exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    and (
+      member_id = (select id from members where email = auth.email())
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
     )
   )
   with check (
-    member_id = (select id from members where email = auth.email())
-    or exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    and (
+      member_id = (select id from members where email = auth.email())
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
     )
   );
 
 create policy "Bookings delete for authed" on bookings
   for delete to authenticated
   using (
-    member_id = (select id from members where email = auth.email())
-    or exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    and (
+      member_id = (select id from members where email = auth.email())
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
     )
   );
 
@@ -264,7 +337,7 @@ create policy "Admins insert for authed" on admins
       join members m on m.id = member_id
       where m.email = auth.email()
       and am.email = m.email
-      and am.is_admin = true
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'admin'
     )
   );
 
@@ -284,9 +357,22 @@ create policy "Allowed members readable" on allowed_member
 create policy "Allowed members insert for authed" on allowed_member
   for insert to authenticated
   with check (
-    exists (
-      select 1 from admins
-      where member_id = (select id from members where email = auth.email())
+    (
+      exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+    )
+    or (
+      exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'coordinator'
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) = 'guest'
+      and coalesce(is_admin, false) = false
     )
   );
 
