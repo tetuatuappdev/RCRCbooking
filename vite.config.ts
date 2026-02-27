@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import legacy from '@vitejs/plugin-legacy'
 
 const buildId =
   process.env.VERCEL_GIT_COMMIT_SHA ||
@@ -13,6 +14,9 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    legacy({
+      targets: ['defaults', 'not IE 11'],
+    }),
     {
       name: 'build-meta',
       generateBundle() {
