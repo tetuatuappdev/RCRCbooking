@@ -944,6 +944,12 @@ select:focus {
   margin-top: 4px;
 }
 
+.pending-confirmations-list {
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
 .booking-pill strong {
   display: block;
 }

@@ -1893,7 +1893,15 @@ function App() {
           <button
             className="menu-button"
             type="button"
-            onClick={() => setIsMenuOpen((prev) => !prev)}
+            onClick={() => {
+              setIsMenuOpen((prev) => {
+                const next = !prev
+                if (next) {
+                  fetchPendingBookings()
+                }
+                return next
+              })
+            }}
             aria-label="Open menu"
           >
             <span />
@@ -2202,7 +2210,7 @@ function App() {
                           : 'All completed bookings have been confirmed.'}
                       </p>
                     ) : (
-                      <div className="form-grid">
+                      <div className="form-grid pending-confirmations-list">
                         {!isAdmin ? (
                           <p className="helper">
                             Confirm each completed booking before returning to the schedule.
