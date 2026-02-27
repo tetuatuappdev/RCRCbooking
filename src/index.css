@@ -944,6 +944,15 @@ select:focus {
   margin-top: 4px;
 }
 
+.pending-confirmation-card--clickable {
+  cursor: pointer;
+}
+
+.pending-confirmation-card--clickable:hover {
+  border-color: rgba(249, 115, 22, 0.8);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
 .pending-confirmations-list {
   max-height: min(70vh, 640px);
   overflow-y: auto;

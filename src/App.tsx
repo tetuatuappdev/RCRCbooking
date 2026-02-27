@@ -233,6 +233,7 @@ function App() {
   const [pushBusy, setPushBusy] = useState(false)
   const [isPendingLoading, setIsPendingLoading] = useState(false)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
+  const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -247,6 +248,9 @@ function App() {
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
   const hasBlockingPendingConfirmations = !isAdmin && pendingBookings.length > 0
+  const selectedPendingBooking = selectedPendingBookingId
+    ? pendingBookings.find((booking) => booking.id === selectedPendingBookingId) ?? null
+    : null
 
   useEffect(() => {
     if (!__BUILD_ID__) {
@@ -616,8 +620,15 @@ function App() {
       return
     }
 
-    setPendingBookings(data ?? [])
-  }, [currentMember, isAdmin, session])
+    const nextPendingBookings = data ?? []
+    setPendingBookings(nextPendingBookings)
+    if (
+      selectedPendingBookingId &&
+      !nextPendingBookings.some((booking) => booking.id === selectedPendingBookingId)
+    ) {
+      setSelectedPendingBookingId(null)
+    }
+  }, [currentMember, isAdmin, selectedPendingBookingId, session])
 
   const filteredBoats = useMemo(() => {
     if (!boatTypeFilter) {
@@ -2209,6 +2220,59 @@ function App() {
                           ? 'No bookings are waiting for confirmation.'
                           : 'All completed bookings have been confirmed.'}
                       </p>
+                    ) : isAdmin && selectedPendingBooking ? (
+                      <div className="form-grid">
+                        <button
+                          className="button ghost"
+                          type="button"
+                          onClick={() => setSelectedPendingBookingId(null)}
+                        >
+                          Back to pending confirmations
+                        </button>
+                        <div className="template-summary pending-confirmation-card">
+                          <div className="template-info">
+                            <strong>
+                              {getRelatedType(selectedPendingBooking.boats)
+                                ? `${getRelatedType(selectedPendingBooking.boats)} `
+                                : ''}
+                              {getRelatedName(selectedPendingBooking.boats) ?? 'Boat'}
+                            </strong>
+                            <span>{formatDayLabel(selectedPendingBooking.start_time.slice(0, 10))}</span>
+                            <span>
+                              {formatTime(selectedPendingBooking.start_time)} -{' '}
+                              {formatTime(selectedPendingBooking.end_time)}
+                            </span>
+                            <span>
+                              {getRelatedName(selectedPendingBooking.members) ?? 'Member'} booked this
+                              outing.
+                            </span>
+                          </div>
+                          <div className="modal-actions">
+                            <button
+                              className="button primary"
+                              type="button"
+                              onClick={() =>
+                                handleResolvePendingBooking(selectedPendingBooking, 'confirmed')
+                              }
+                              disabled={pendingActionId === selectedPendingBooking.id}
+                            >
+                              {pendingActionId === selectedPendingBooking.id
+                                ? 'Saving...'
+                                : 'Outing happened'}
+                            </button>
+                            <button
+                              className="button ghost danger"
+                              type="button"
+                              onClick={() =>
+                                handleResolvePendingBooking(selectedPendingBooking, 'cancelled')
+                              }
+                              disabled={pendingActionId === selectedPendingBooking.id}
+                            >
+                              Did not happen
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     ) : (
                       <div className="form-grid pending-confirmations-list">
                         {!isAdmin ? (
@@ -2222,14 +2286,35 @@ function App() {
                           const memberName = getRelatedName(booking.members) ?? 'Member'
                           const busy = pendingActionId === booking.id
                           return (
-                            <div key={booking.id} className="template-summary pending-confirmation-card">
+                            <div
+                              key={booking.id}
+                              className={`template-summary pending-confirmation-card${
+                                isAdmin ? ' pending-confirmation-card--clickable' : ''
+                              }`}
+                              onClick={() => {
+                                if (isAdmin) {
+                                  setSelectedPendingBookingId(booking.id)
+                                }
+                              }}
+                              role={isAdmin ? 'button' : undefined}
+                              tabIndex={isAdmin ? 0 : undefined}
+                              onKeyDown={(event) => {
+                                if (
+                                  isAdmin &&
+                                  (event.key === 'Enter' || event.key === ' ')
+                                ) {
+                                  event.preventDefault()
+                                  setSelectedPendingBookingId(booking.id)
+                                }
+                              }}
+                            >
                               <div className="template-info">
                                 <strong>
                                   {boatType ? `${boatType} ` : ''}
                                   {boatName}
                                 </strong>
+                                <span>{formatDayLabel(booking.start_time.slice(0, 10))}</span>
                                 <span>
-                                  {formatDayLabel(booking.start_time.slice(0, 10))} •{' '}
                                   {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
                                 </span>
                                 {isAdmin ? <span>{memberName} must confirm this outing.</span> : null}
