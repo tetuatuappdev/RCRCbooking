@@ -231,6 +231,7 @@ function App() {
   const [pushSupported, setPushSupported] = useState(false)
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
+  const [pushPromptDismissed, setPushPromptDismissed] = useState(false)
   const [isPendingLoading, setIsPendingLoading] = useState(false)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
@@ -248,6 +249,13 @@ function App() {
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
   const hasBlockingPendingConfirmations = !isAdmin && pendingBookings.length > 0
+  const shouldShowPushPrompt =
+    Boolean(session && currentMember) &&
+    pushSupported &&
+    !pushEnabled &&
+    !pushPromptDismissed &&
+    Notification.permission !== 'denied' &&
+    !hasBlockingPendingConfirmations
   const selectedPendingBooking = selectedPendingBookingId
     ? pendingBookings.find((booking) => booking.id === selectedPendingBookingId) ?? null
     : null
@@ -350,6 +358,10 @@ function App() {
         setPushEnabled(false)
       })
   }, [session])
+
+  useEffect(() => {
+    setPushPromptDismissed(false)
+  }, [session?.user?.id])
 
   useEffect(() => {
     const sessionEmail = session?.user?.email
@@ -2110,6 +2122,34 @@ function App() {
       {session && authView !== 'setPassword' ? (
         <main className="shell">
           <div className="page-pad schedule-top">
+            {shouldShowPushPrompt ? (
+              <div className="push-prompt">
+                <div>
+                  <strong>Enable notifications</strong>
+                  <p>Turn on push notifications for booking reminders and pending confirmations.</p>
+                </div>
+                <div className="push-prompt-actions">
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={() => {
+                      subscribeToPush()
+                    }}
+                    disabled={pushBusy}
+                  >
+                    {pushBusy ? 'Working...' : 'Enable notifications'}
+                  </button>
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => setPushPromptDismissed(true)}
+                    disabled={pushBusy}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="actions">
               {viewMode === 'schedule' ? (
                 <div className="date-control">

@@ -509,6 +509,30 @@ body {
   margin-top: 6px;
 }
 
+.push-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  background: linear-gradient(135deg, rgba(255, 247, 237, 0.96), rgba(255, 237, 213, 0.9));
+  box-shadow: 0 10px 24px rgba(249, 115, 22, 0.12);
+}
+
+.push-prompt p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+}
+
+.push-prompt-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .status-inline {
   display: flex;
   align-items: center;
@@ -1053,6 +1077,19 @@ select:focus {
 }
 
 @media (max-width: 900px) {
+  .push-prompt {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .push-prompt-actions {
+    justify-content: stretch;
+  }
+
+  .push-prompt-actions .button {
+    flex: 1;
+  }
+
   .hero {
     flex-direction: column;
     align-items: flex-start;
