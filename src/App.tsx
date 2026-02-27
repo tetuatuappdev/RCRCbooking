@@ -8,7 +8,7 @@ const END_HOUR = 20
 const HOUR_WIDTH = 180
 const LANE_HEIGHT = 64
 const BOOKING_SELECT =
-  'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members(name,email)'
+  'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)'
 
 type Member = {
   id: string
