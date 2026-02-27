@@ -113,9 +113,15 @@ type BoatPermission = {
 
 type UserRole = 'admin' | 'coordinator' | 'guest'
 
-type RiskAssessment = {
+type BookingRiskAssessmentLink = {
   id: string
   booking_id: string
+  risk_assessment_id: string
+  bookings?: Booking | Booking[] | null
+}
+
+type RiskAssessment = {
+  id: string
   member_id: string
   coordinator_name: string
   session_date: string
@@ -131,8 +137,8 @@ type RiskAssessment = {
   risk_actions: string
   incoming_tide: string
   created_at?: string
-  bookings?: Booking | null
   members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
+  booking_risk_assessments?: BookingRiskAssessmentLink[] | null
 }
 
 type ScheduleItem = {
@@ -230,6 +236,13 @@ const toDateInputValue = (value: string) => {
   return `${year}-${month}-${day}`
 }
 
+const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
+  if (!value) {
+    return null
+  }
+  return Array.isArray(value) ? value[0] ?? null : value
+}
+
 const urlBase64ToUint8Array = (value: string) => {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -295,6 +308,8 @@ function App() {
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
   const [riskAssessmentBooking, setRiskAssessmentBooking] = useState<Booking | null>(null)
   const [editingRiskAssessment, setEditingRiskAssessment] = useState<RiskAssessment | null>(null)
+  const [linkedRiskAssessment, setLinkedRiskAssessment] = useState<RiskAssessment | null>(null)
+  const [availableRiskAssessments, setAvailableRiskAssessments] = useState<RiskAssessment[]>([])
   const [riskAssessments, setRiskAssessments] = useState<RiskAssessment[]>([])
   const [boatForm, setBoatForm] = useState({
     code: '',
@@ -715,7 +730,10 @@ function App() {
     let query = supabase
       .from('risk_assessments')
       .select(
-        'id, booking_id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision, visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions, incoming_tide, created_at, bookings(id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)), members(name,email)',
+        `id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision,
+        visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions,
+        incoming_tide, created_at, members(name,email),
+        booking_risk_assessments(id, booking_id, risk_assessment_id, bookings(${BOOKING_SELECT}))`,
       )
       .order('session_date', { ascending: false })
       .order('session_time', { ascending: false })
@@ -733,8 +751,11 @@ function App() {
     setRiskAssessments(
       (data ?? []).map((assessment) => ({
         ...assessment,
-        bookings: Array.isArray(assessment.bookings) ? assessment.bookings[0] ?? null : assessment.bookings ?? null,
         members: Array.isArray(assessment.members) ? assessment.members[0] ?? null : assessment.members ?? null,
+        booking_risk_assessments: (assessment.booking_risk_assessments ?? []).map((link) => ({
+          ...link,
+          bookings: normalizeLinkedBooking(link.bookings),
+        })),
       })),
     )
   }, [currentMember, isAdmin, session])
@@ -757,6 +778,8 @@ function App() {
     })
     setRiskAssessmentBooking(null)
     setEditingRiskAssessment(null)
+    setLinkedRiskAssessment(null)
+    setAvailableRiskAssessments([])
     setIsRiskAssessmentLoading(false)
   }
 
@@ -765,10 +788,13 @@ function App() {
     setStatus(null)
     setRiskAssessmentBooking(booking)
     setEditingRiskAssessment(null)
+    setLinkedRiskAssessment(null)
+    setAvailableRiskAssessments([])
     setIsRiskAssessmentLoading(true)
+    const ownerMemberId = booking.member_id ?? currentMember?.id ?? ''
 
     const defaultForm = {
-      coordinator_name: currentMember?.name ?? getRelatedName(booking.members) ?? '',
+      coordinator_name: getRelatedName(booking.members) ?? currentMember?.name ?? '',
       session_date: toDateInputValue(booking.start_time),
       session_time: formatTimeInput(booking.start_time),
       crew_type: '',
@@ -783,37 +809,86 @@ function App() {
       incoming_tide: '',
     }
 
-    const { data, error } = await supabase
-      .from('risk_assessments')
-      .select(
-        'id, booking_id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision, visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions, incoming_tide',
-      )
-      .eq('booking_id', booking.id)
-      .maybeSingle()
+    const bookingDate = toDateInputValue(booking.start_time)
+    const bookingTime = formatTimeInput(booking.start_time)
 
-    if (error) {
-      setError(error.message)
+    const [linkedResult, availableResult] = await Promise.all([
+      supabase
+        .from('booking_risk_assessments')
+        .select(
+          `id, booking_id, risk_assessment_id, risk_assessments(
+            id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type,
+            launch_supervision, visibility, river_level, water_conditions, air_temperature,
+            wind_conditions, risk_actions, incoming_tide, created_at, members(name,email)
+          )`,
+        )
+        .eq('booking_id', booking.id)
+        .maybeSingle(),
+      supabase
+        .from('risk_assessments')
+        .select(
+          'id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision, visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions, incoming_tide, created_at, members(name,email)',
+        )
+        .eq('member_id', ownerMemberId)
+        .eq('session_date', bookingDate)
+        .eq('session_time', bookingTime)
+        .order('created_at', { ascending: false }),
+    ])
+
+    if (linkedResult.error) {
+      setError(linkedResult.error.message)
       setRiskAssessmentForm(defaultForm)
       setIsRiskAssessmentLoading(false)
       return
     }
 
-    if (data) {
-      setEditingRiskAssessment(data)
+    if (availableResult.error) {
+      setError(availableResult.error.message)
+      setRiskAssessmentForm(defaultForm)
+      setIsRiskAssessmentLoading(false)
+      return
+    }
+
+    const linkedData = (linkedResult.data?.risk_assessments ?? null) as
+      | (RiskAssessment & { members?: RiskAssessment['members'] })
+      | RiskAssessment[]
+      | null
+    const normalizedLinked =
+      linkedData && !Array.isArray(linkedData)
+        ? {
+            ...linkedData,
+            members: Array.isArray(linkedData.members)
+              ? linkedData.members[0] ?? null
+              : linkedData.members ?? null,
+            booking_risk_assessments: [],
+          }
+        : null
+
+    const availableData = (availableResult.data ?? []).map((assessment) => ({
+      ...assessment,
+      members: Array.isArray(assessment.members) ? assessment.members[0] ?? null : assessment.members ?? null,
+      booking_risk_assessments: [],
+    }))
+
+    setAvailableRiskAssessments(availableData)
+
+    if (normalizedLinked) {
+      setLinkedRiskAssessment(normalizedLinked)
+      setEditingRiskAssessment(normalizedLinked)
       setRiskAssessmentForm({
-        coordinator_name: data.coordinator_name,
-        session_date: data.session_date,
-        session_time: data.session_time,
-        crew_type: data.crew_type,
-        boat_type: data.boat_type,
-        launch_supervision: data.launch_supervision,
-        visibility: data.visibility,
-        river_level: data.river_level,
-        water_conditions: data.water_conditions,
-        air_temperature: data.air_temperature,
-        wind_conditions: data.wind_conditions,
-        risk_actions: data.risk_actions,
-        incoming_tide: data.incoming_tide,
+        coordinator_name: normalizedLinked.coordinator_name,
+        session_date: normalizedLinked.session_date,
+        session_time: normalizedLinked.session_time,
+        crew_type: normalizedLinked.crew_type,
+        boat_type: normalizedLinked.boat_type,
+        launch_supervision: normalizedLinked.launch_supervision,
+        visibility: normalizedLinked.visibility,
+        river_level: normalizedLinked.river_level,
+        water_conditions: normalizedLinked.water_conditions,
+        air_temperature: normalizedLinked.air_temperature,
+        wind_conditions: normalizedLinked.wind_conditions,
+        risk_actions: normalizedLinked.risk_actions,
+        incoming_tide: normalizedLinked.incoming_tide,
       })
     } else {
       setRiskAssessmentForm(defaultForm)
@@ -2017,23 +2092,83 @@ function App() {
     }
 
     const payload = {
-      booking_id: riskAssessmentBooking.id,
-      member_id: currentMember.id,
+      member_id: riskAssessmentBooking.member_id ?? currentMember.id,
       ...riskAssessmentForm,
       updated_at: new Date().toISOString(),
     }
 
-    const query = editingRiskAssessment
-      ? supabase.from('risk_assessments').update(payload).eq('id', editingRiskAssessment.id)
-      : supabase.from('risk_assessments').insert(payload)
+    let riskAssessmentId = editingRiskAssessment?.id ?? null
 
-    const { error } = await query
+    if (editingRiskAssessment) {
+      const { error } = await supabase
+        .from('risk_assessments')
+        .update(payload)
+        .eq('id', editingRiskAssessment.id)
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('risk_assessments')
+        .insert(payload)
+        .select('id')
+        .single()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      riskAssessmentId = data.id
+    }
+
+    if (!riskAssessmentId) {
+      setError('Unable to link risk assessment to booking.')
+      return
+    }
+
+    const { error: linkError } = await supabase.from('booking_risk_assessments').upsert(
+      {
+        booking_id: riskAssessmentBooking.id,
+        risk_assessment_id: riskAssessmentId,
+      },
+      { onConflict: 'booking_id' },
+    )
+
+    if (linkError) {
+      setError(linkError.message)
+      return
+    }
+
+    setStatus(editingRiskAssessment ? 'Risk assessment updated.' : 'Risk assessment created.')
+    await fetchRiskAssessments()
+    resetRiskAssessmentForm()
+  }
+
+  const handleLinkExistingRiskAssessment = async (assessment: RiskAssessment) => {
+    if (!riskAssessmentBooking) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error } = await supabase.from('booking_risk_assessments').upsert(
+      {
+        booking_id: riskAssessmentBooking.id,
+        risk_assessment_id: assessment.id,
+      },
+      { onConflict: 'booking_id' },
+    )
+
     if (error) {
       setError(error.message)
       return
     }
 
-    setStatus(editingRiskAssessment ? 'Risk assessment updated.' : 'Risk assessment created.')
+    setStatus('Existing risk assessment linked.')
     await fetchRiskAssessments()
     resetRiskAssessmentForm()
   }
@@ -2650,15 +2785,16 @@ function App() {
                   </thead>
                   <tbody>
                     {riskAssessments.map((assessment) => {
-                      const booking = assessment.bookings
-                      const boatName = booking ? getRelatedName(booking.boats) ?? 'Boat' : 'Boat'
-                      const memberName = booking ? getRelatedName(booking.members) ?? 'Member' : 'Member'
+                      const linkedBookings = assessment.booking_risk_assessments ?? []
+                      const firstBooking = normalizeLinkedBooking(linkedBookings[0]?.bookings)
+                      const boatName = firstBooking ? getRelatedName(firstBooking.boats) ?? 'Boat' : 'Boat'
+                      const memberName = firstBooking ? getRelatedName(firstBooking.members) ?? 'Member' : 'Member'
                       return (
                         <tr
                           key={assessment.id}
                           onClick={() => {
-                            if (booking) {
-                              openRiskAssessmentEditor(booking)
+                            if (firstBooking) {
+                              openRiskAssessmentEditor(firstBooking)
                             }
                           }}
                         >
@@ -2667,7 +2803,7 @@ function App() {
                           <td>{assessment.coordinator_name}</td>
                           <td>{assessment.crew_type}</td>
                           <td>{assessment.boat_type}</td>
-                          <td>{`${boatName} / ${memberName}`}</td>
+                          <td>{`${boatName} / ${memberName} (${linkedBookings.length})`}</td>
                         </tr>
                       )
                     })}
@@ -3399,7 +3535,7 @@ function App() {
                       type="button"
                       onClick={() => openRiskAssessmentEditor(editingBooking)}
                     >
-                      Create Risk Assessment
+                      Create / Link Risk Assessment
                     </button>
                   ) : null}
                   {editingBooking ? (
@@ -3419,7 +3555,13 @@ function App() {
         <div className="modal-backdrop" onClick={resetRiskAssessmentForm}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3>{editingRiskAssessment ? 'Edit Risk Assessment' : 'Create Risk Assessment'}</h3>
+              <h3>
+                {linkedRiskAssessment
+                  ? 'Edit Linked Risk Assessment'
+                  : editingRiskAssessment
+                    ? 'Edit Risk Assessment'
+                    : 'Create Risk Assessment'}
+              </h3>
               <button className="button ghost" type="button" onClick={resetRiskAssessmentForm}>
                 Close
               </button>
@@ -3428,6 +3570,26 @@ function App() {
               <p className="empty-state">Loading risk assessment...</p>
             ) : (
               <div className="form-grid">
+                {!linkedRiskAssessment && availableRiskAssessments.length > 0 ? (
+                  <div className="field">
+                    <span>Existing risk assessments for this time slot</span>
+                    <div className="boat-list">
+                      {availableRiskAssessments.map((assessment) => (
+                        <button
+                          key={assessment.id}
+                          className="button ghost"
+                          type="button"
+                          onClick={() => handleLinkExistingRiskAssessment(assessment)}
+                        >
+                          {assessment.coordinator_name} - {assessment.session_date} {assessment.session_time}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="helper">
+                      You can link one of these existing assessments instead of creating a new one.
+                    </p>
+                  </div>
+                ) : null}
                 <label className="field">
                   <span>Coach/Crew Coordinator Name</span>
                   <input
@@ -3638,7 +3800,9 @@ function App() {
                   </select>
                 </label>
                 <button className="button primary" type="button" onClick={handleSaveRiskAssessment}>
-                  {editingRiskAssessment ? 'Save Risk Assessment' : 'Create Risk Assessment'}
+                  {linkedRiskAssessment || editingRiskAssessment
+                    ? 'Save Risk Assessment'
+                    : 'Create New Risk Assessment'}
                 </button>
               </div>
             )}

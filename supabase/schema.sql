@@ -48,7 +48,6 @@ create table if not exists booking_templates (
 
 create table if not exists risk_assessments (
   id uuid primary key default gen_random_uuid(),
-  booking_id uuid not null unique references bookings(id) on delete cascade,
   member_id uuid not null references members(id) on delete cascade,
   coordinator_name text not null,
   session_date date not null,
@@ -65,6 +64,13 @@ create table if not exists risk_assessments (
   incoming_tide text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists booking_risk_assessments (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null unique references bookings(id) on delete cascade,
+  risk_assessment_id uuid not null references risk_assessments(id) on delete cascade,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists template_exceptions (
@@ -152,6 +158,7 @@ alter table admins enable row level security;
 alter table allowed_member enable row level security;
 alter table booking_templates enable row level security;
 alter table risk_assessments enable row level security;
+alter table booking_risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
 alter table boat_permissions enable row level security;
 
@@ -224,6 +231,82 @@ create policy "Risk assessments update for authed" on risk_assessments
     or exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Booking risk assessments readable for authed" on booking_risk_assessments
+  for select to authenticated
+  using (
+    exists (
+      select 1
+      from risk_assessments ra
+      where ra.id = risk_assessment_id
+      and (
+        ra.member_id = (select id from members where email = auth.email())
+        or exists (
+          select 1 from admins
+          where member_id = (select id from members where email = auth.email())
+        )
+      )
+    )
+  );
+
+create policy "Booking risk assessments insert for authed" on booking_risk_assessments
+  for insert to authenticated
+  with check (
+    exists (
+      select 1
+      from risk_assessments ra
+      where ra.id = risk_assessment_id
+      and (
+        ra.member_id = (select id from members where email = auth.email())
+        or exists (
+          select 1 from admins
+          where member_id = (select id from members where email = auth.email())
+        )
+      )
+    )
+    and (
+      exists (
+        select 1 from bookings b
+        where b.id = booking_id
+        and b.member_id = (select id from members where email = auth.email())
+      )
+      or exists (
+        select 1 from admins
+        where member_id = (select id from members where email = auth.email())
+      )
+    )
+  );
+
+create policy "Booking risk assessments update for authed" on booking_risk_assessments
+  for update to authenticated
+  using (
+    exists (
+      select 1
+      from risk_assessments ra
+      where ra.id = risk_assessment_id
+      and (
+        ra.member_id = (select id from members where email = auth.email())
+        or exists (
+          select 1 from admins
+          where member_id = (select id from members where email = auth.email())
+        )
+      )
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from risk_assessments ra
+      where ra.id = risk_assessment_id
+      and (
+        ra.member_id = (select id from members where email = auth.email())
+        or exists (
+          select 1 from admins
+          where member_id = (select id from members where email = auth.email())
+        )
+      )
     )
   );
 
