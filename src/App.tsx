@@ -1081,31 +1081,6 @@ function App() {
     }
   }, [getAccessToken, pushSupported])
 
-  const notifyBookingCreated = useCallback(
-    async (bookingIds: string[]) => {
-      if (bookingIds.length === 0) {
-        return
-      }
-      try {
-        const token = await getAccessToken()
-        if (!token) {
-          return
-        }
-        await fetch('/api/push/notify-booking', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ bookingIds }),
-        })
-      } catch {
-        // Ignore notification errors.
-      }
-    },
-    [getAccessToken],
-  )
-
   const handleSignUp = async () => {
     setError(null)
     setStatus(null)
@@ -1652,7 +1627,7 @@ function App() {
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
       }))
-      const { data: inserted, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('bookings')
         .insert(inserts)
         .select('id')
@@ -1662,9 +1637,6 @@ function App() {
         return
       }
       setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
-      if (inserted && inserted.length > 0) {
-        notifyBookingCreated(inserted.map((row) => row.id))
-      }
     }
 
     resetBookingForm()
