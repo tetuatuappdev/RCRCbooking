@@ -2214,7 +2214,7 @@ function App() {
                           const memberName = getRelatedName(booking.members) ?? 'Member'
                           const busy = pendingActionId === booking.id
                           return (
-                            <div key={booking.id} className="template-summary">
+                            <div key={booking.id} className="template-summary pending-confirmation-card">
                               <div className="template-info">
                                 <strong>
                                   {boatType ? `${boatType} ` : ''}
