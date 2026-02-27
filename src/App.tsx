@@ -7,6 +7,8 @@ const START_HOUR = 7.5
 const END_HOUR = 20
 const HOUR_WIDTH = 180
 const LANE_HEIGHT = 64
+const BOOKING_SELECT =
+  'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members(name,email)'
 
 type Member = {
   id: string
@@ -32,8 +34,11 @@ type Booking = {
   member_id: string | null
   start_time: string
   end_time: string
+  usage_status?: 'scheduled' | 'pending' | 'confirmed' | 'cancelled' | null
+  usage_confirmed_at?: string | null
+  usage_confirmed_by?: string | null
   boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
-  members?: { name: string } | { name: string }[] | null
+  members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
 }
 
 type TemplateBooking = {
@@ -139,6 +144,16 @@ const getRelatedType = (
   return Array.isArray(value) ? value[0]?.type ?? null : value.type ?? null
 }
 
+const getRoleLabel = (role: UserRole) => {
+  if (role === 'admin') {
+    return 'Admin'
+  }
+  if (role === 'coordinator') {
+    return 'Coordinator'
+  }
+  return 'Guest'
+}
+
 const urlBase64ToUint8Array = (value: string) => {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -162,6 +177,7 @@ function App() {
   >([])
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
+  const [pendingBookings, setPendingBookings] = useState<Booking[]>([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
@@ -181,9 +197,9 @@ function App() {
     getWeekdayIndex(getTodayString()),
   )
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
-  const [viewMode, setViewMode] = useState<'schedule' | 'templates' | 'boats' | 'access' | 'profile'>(
-    'schedule',
-  )
+  const [viewMode, setViewMode] = useState<
+    'schedule' | 'templates' | 'boats' | 'access' | 'profile' | 'pendingConfirmations'
+  >('schedule')
 
   const [showNewBooking, setShowNewBooking] = useState(false)
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
@@ -215,6 +231,8 @@ function App() {
   const [pushSupported, setPushSupported] = useState(false)
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
+  const [isPendingLoading, setIsPendingLoading] = useState(false)
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [accessForm, setAccessForm] = useState({
     email: '',
@@ -228,6 +246,7 @@ function App() {
   const isCoordinator = userRole === 'coordinator'
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
+  const hasBlockingPendingConfirmations = !isAdmin && pendingBookings.length > 0
 
   useEffect(() => {
     if (!__BUILD_ID__) {
@@ -570,6 +589,36 @@ function App() {
     )
   }, [])
 
+  const fetchPendingBookings = useCallback(async () => {
+    if (!session || !currentMember) {
+      setPendingBookings([])
+      return
+    }
+
+    setIsPendingLoading(true)
+    let query = supabase
+      .from('bookings')
+      .select(
+        BOOKING_SELECT,
+      )
+      .eq('usage_status', 'pending')
+      .order('end_time', { ascending: true })
+
+    if (!isAdmin) {
+      query = query.eq('member_id', currentMember.id)
+    }
+
+    const { data, error } = await query
+    setIsPendingLoading(false)
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setPendingBookings(data ?? [])
+  }, [currentMember, isAdmin, session])
+
   const filteredBoats = useMemo(() => {
     if (!boatTypeFilter) {
       return boats
@@ -623,6 +672,29 @@ function App() {
   }, [fetchBoats, viewMode])
 
   useEffect(() => {
+    if (!session || !currentMember) {
+      setPendingBookings([])
+      return
+    }
+
+    fetchPendingBookings()
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchPendingBookings()
+      }
+    }
+
+    const interval = window.setInterval(fetchPendingBookings, 60000)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [currentMember, fetchPendingBookings, session])
+
+  useEffect(() => {
     fetchBoatPermissions()
   }, [fetchBoatPermissions])
 
@@ -637,6 +709,22 @@ function App() {
       setViewMode('schedule')
     }
   }, [canManageAccess, isAdmin, viewMode])
+
+  useEffect(() => {
+    if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
+      setShowNewBooking(false)
+      setEditingBooking(null)
+      setEditingTemplate(null)
+      setEditingBoat(null)
+      setShowAccessEditor(false)
+      setIsMenuOpen(false)
+      setViewMode('pendingConfirmations')
+    }
+
+    if (!hasBlockingPendingConfirmations && viewMode === 'pendingConfirmations' && !isAdmin) {
+      setViewMode('schedule')
+    }
+  }, [hasBlockingPendingConfirmations, isAdmin, viewMode])
 
   useEffect(() => {
     if (currentMember && !isAdmin && viewMode === 'schedule') {
@@ -659,7 +747,7 @@ function App() {
       const [bookingsResult, templatesResult, exceptionsResult] = await Promise.all([
         supabase
           .from('bookings')
-          .select('id, boat_id, member_id, start_time, end_time, boats(name,type), members(name)')
+          .select(BOOKING_SELECT)
           .lt('start_time', dayEnd.toISOString())
           .gt('end_time', dayStart.toISOString())
           .order('start_time', { ascending: true }),
@@ -1564,7 +1652,7 @@ function App() {
 
     const { data } = await supabase
       .from('bookings')
-      .select('id, boat_id, member_id, start_time, end_time, boats(name,type), members(name)')
+      .select(BOOKING_SELECT)
       .lt('start_time', dayEnd.toISOString())
       .gt('end_time', dayStart.toISOString())
       .order('start_time', { ascending: true })
@@ -1604,7 +1692,7 @@ function App() {
 
     const { data } = await supabase
       .from('bookings')
-      .select('id, boat_id, member_id, start_time, end_time, boats(name,type), members(name)')
+      .select(BOOKING_SELECT)
       .lt('start_time', dayEnd.toISOString())
       .gt('end_time', dayStart.toISOString())
       .order('start_time', { ascending: true })
@@ -1650,6 +1738,46 @@ function App() {
     )
     setEditingTemplate(null)
     setStatus('Booking removed')
+  }
+
+  const handleResolvePendingBooking = async (
+    booking: Booking,
+    usageStatus: 'confirmed' | 'cancelled',
+  ) => {
+    if (!currentMember) {
+      return
+    }
+
+    setPendingActionId(booking.id)
+    setError(null)
+    setStatus(null)
+
+    const canResolve = isAdmin || booking.member_id === currentMember.id
+    if (!canResolve) {
+      setError('You can only confirm your own completed bookings.')
+      setPendingActionId(null)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('bookings')
+      .update({
+        usage_status: usageStatus,
+        usage_confirmed_at: new Date().toISOString(),
+        usage_confirmed_by: currentMember.id,
+      })
+      .eq('id', booking.id)
+      .eq('usage_status', 'pending')
+
+    if (updateError) {
+      setError(updateError.message)
+      setPendingActionId(null)
+      return
+    }
+
+    setStatus(usageStatus === 'confirmed' ? 'Outing confirmed.' : 'Booking marked as not used.')
+    await fetchPendingBookings()
+    setPendingActionId(null)
   }
 
   const handleSaveAccess = async () => {
@@ -1760,7 +1888,7 @@ function App() {
           </button>
         </div>
       ) : null}
-      {session ? (
+      {session && !hasBlockingPendingConfirmations ? (
         <div className="header-menu">
           <button
             className="menu-button"
@@ -1831,6 +1959,21 @@ function App() {
                 >
                   Outing Risk Assessment
                 </button>
+                {isAdmin ? (
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      setShowNewBooking(false)
+                      setEditingBooking(null)
+                      setEditingTemplate(null)
+                      setViewMode('pendingConfirmations')
+                    }}
+                  >
+                    Pending confirmations ({pendingBookings.length})
+                  </button>
+                ) : null}
                 {isAdmin ? (
                   <>
                     <button
@@ -2041,7 +2184,77 @@ function App() {
               viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
             }`}
           >
-            {viewMode === 'profile' ? (
+            {viewMode === 'pendingConfirmations' ? (
+              <div className="page-pad">
+                <section className="panel login-panel auth-card single">
+                  <div className="auth-form">
+                    <div className="panel-header">
+                      <h2>
+                        {isAdmin ? 'Pending confirmations' : 'Confirm completed bookings'}
+                      </h2>
+                    </div>
+                    {isPendingLoading ? (
+                      <p className="empty-state">Loading pending confirmations...</p>
+                    ) : pendingBookings.length === 0 ? (
+                      <p className="empty-state">
+                        {isAdmin
+                          ? 'No bookings are waiting for confirmation.'
+                          : 'All completed bookings have been confirmed.'}
+                      </p>
+                    ) : (
+                      <div className="form-grid">
+                        {!isAdmin ? (
+                          <p className="helper">
+                            Confirm each completed booking before returning to the schedule.
+                          </p>
+                        ) : null}
+                        {pendingBookings.map((booking) => {
+                          const boatName = getRelatedName(booking.boats) ?? 'Boat'
+                          const boatType = getRelatedType(booking.boats)
+                          const memberName = getRelatedName(booking.members) ?? 'Member'
+                          const busy = pendingActionId === booking.id
+                          return (
+                            <div key={booking.id} className="template-summary">
+                              <div className="template-info">
+                                <strong>
+                                  {boatType ? `${boatType} ` : ''}
+                                  {boatName}
+                                </strong>
+                                <span>
+                                  {formatDayLabel(booking.start_time.slice(0, 10))} •{' '}
+                                  {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
+                                </span>
+                                {isAdmin ? <span>{memberName} must confirm this outing.</span> : null}
+                              </div>
+                              {!isAdmin ? (
+                                <div className="modal-actions">
+                                  <button
+                                    className="button primary"
+                                    type="button"
+                                    onClick={() => handleResolvePendingBooking(booking, 'confirmed')}
+                                    disabled={busy}
+                                  >
+                                    {busy ? 'Saving...' : 'Outing happened'}
+                                  </button>
+                                  <button
+                                    className="button ghost danger"
+                                    type="button"
+                                    onClick={() => handleResolvePendingBooking(booking, 'cancelled')}
+                                    disabled={busy}
+                                  >
+                                    Did not happen
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            ) : viewMode === 'profile' ? (
               <div className="page-pad">
                 <section className="panel login-panel auth-card single">
                   <div className="auth-form">
@@ -2059,16 +2272,7 @@ function App() {
                       </label>
                       <label className="field">
                         <span>Role</span>
-                        <input
-                          value={
-                            userRole === 'admin'
-                              ? 'Admin'
-                              : userRole === 'coordinator'
-                                ? 'Coordinator'
-                                : 'Guest'
-                          }
-                          readOnly
-                        />
+                        <input value={getRoleLabel(userRole)} readOnly />
                       </label>
                       {pushSupported ? (
                         <button
@@ -2486,7 +2690,8 @@ function App() {
       !editingTemplate &&
       viewMode !== 'boats' &&
       viewMode !== 'access' &&
-      viewMode !== 'profile'
+      viewMode !== 'profile' &&
+      viewMode !== 'pendingConfirmations'
         ? createPortal(
             <button
               className="fab"

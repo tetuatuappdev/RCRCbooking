@@ -26,6 +26,9 @@ create table if not exists bookings (
   member_id uuid references members(id) on delete set null,
   start_time timestamptz not null,
   end_time timestamptz not null,
+  usage_status text not null default 'scheduled' check (usage_status in ('scheduled', 'pending', 'confirmed', 'cancelled')),
+  usage_confirmed_at timestamptz,
+  usage_confirmed_by uuid references members(id) on delete set null,
   created_at timestamptz not null default now(),
   constraint end_after_start check (end_time > start_time)
 );
@@ -404,11 +407,22 @@ create table if not exists booking_reminders (
   unique (booking_id, remind_at)
 );
 
+create table if not exists booking_usage_notifications (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null references bookings(id) on delete cascade,
+  notified_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (booking_id)
+);
+
 create index if not exists push_subscriptions_member_idx on push_subscriptions (member_id);
 create index if not exists booking_reminders_booking_idx on booking_reminders (booking_id);
+create index if not exists bookings_usage_status_idx on bookings (usage_status, end_time);
+create index if not exists booking_usage_notifications_booking_idx on booking_usage_notifications (booking_id);
 
 alter table push_subscriptions enable row level security;
 alter table booking_reminders enable row level security;
+alter table booking_usage_notifications enable row level security;
 
 create policy "Push subscriptions readable for authed" on push_subscriptions
   for select to authenticated
