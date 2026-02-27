@@ -46,6 +46,27 @@ create table if not exists booking_templates (
   constraint template_end_after_start check (end_time > start_time)
 );
 
+create table if not exists risk_assessments (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null unique references bookings(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  coordinator_name text not null,
+  session_date date not null,
+  session_time text not null,
+  crew_type text not null,
+  boat_type text not null,
+  launch_supervision text not null,
+  visibility text not null,
+  river_level text not null,
+  water_conditions text not null,
+  air_temperature text not null,
+  wind_conditions text not null,
+  risk_actions text not null,
+  incoming_tide text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists template_exceptions (
   id uuid primary key default gen_random_uuid(),
   template_id uuid not null references booking_templates(id) on delete cascade,
@@ -130,6 +151,7 @@ alter table bookings enable row level security;
 alter table admins enable row level security;
 alter table allowed_member enable row level security;
 alter table booking_templates enable row level security;
+alter table risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
 alter table boat_permissions enable row level security;
 
@@ -167,6 +189,43 @@ create policy "Bookings readable for authed" on bookings
 create policy "Templates readable for authed" on booking_templates
   for select to authenticated
   using (true);
+
+create policy "Risk assessments readable for authed" on risk_assessments
+  for select to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Risk assessments insert for authed" on risk_assessments
+  for insert to authenticated
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Risk assessments update for authed" on risk_assessments
+  for update to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
 
 create policy "Templates delete for authed" on booking_templates
   for delete to authenticated

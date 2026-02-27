@@ -9,6 +9,52 @@ const HOUR_WIDTH = 180
 const LANE_HEIGHT = 64
 const BOOKING_SELECT =
   'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)'
+const CREW_TYPE_OPTIONS = [
+  'Novice or Young Junior (J15 or below)',
+  'Experienced Junior',
+  'Experienced Senior',
+  'Experienced Masters',
+]
+const BOAT_TYPE_OPTIONS = [
+  'Large boat (8+, 4x+, 4x-, 4+, 4-)',
+  'Small boat (1x, 2x, 2-)',
+]
+const LAUNCH_SUPERVISION_OPTIONS = [
+  'Yes, each boat will always be followed by a launch',
+  'Yes, though the launch cover is shared between multiple crews',
+  'No, the boat will not be supervised by a launch',
+]
+const VISIBILITY_OPTIONS = [
+  'Clear',
+  'Slightly reduced (e.g low sun, increased glare, mild mist)',
+  'Reduced (eg. Fog)',
+]
+const RIVER_LEVEL_OPTIONS = [
+  'Above 6m - Crews only to boat with express permission of Club Captain',
+  '5.5 - 6m - Consider if crew competency matches conditions. Younger juniors should not go out',
+  'Below 5.5m',
+]
+const WATER_CONDITION_OPTIONS = [
+  'Calm, slow flowing',
+  'Choppy, slow flowing',
+  'Calm, fast-flowing',
+  'Choppy, fast-flowing',
+]
+const AIR_TEMPERATURE_OPTIONS = [
+  'Above +5',
+  'Between -2 and +5 - Ensure crew has adequate clothing to match conditions and stay warm',
+  'Between -5 and -2 - Beginners/Younger juniors should not go out',
+  'Below -5 - Boating only with the express permission of the club captain',
+]
+const WIND_CONDITION_OPTIONS = [
+  'Calm',
+  'Light/Gentle Breeze',
+  'Moderate Breeze - Consider if crew competency matches conditions',
+  'Fresh/Strong breeze - Beginners/younger juniors should not be out',
+  'Near gale - Boating only with express permission of the club captain',
+  'Light/Moderate Breeze with significant gusting',
+]
+const INCOMING_TIDE_OPTIONS = ['Yes', 'No']
 
 type Member = {
   id: string
@@ -66,6 +112,28 @@ type BoatPermission = {
 }
 
 type UserRole = 'admin' | 'coordinator' | 'guest'
+
+type RiskAssessment = {
+  id: string
+  booking_id: string
+  member_id: string
+  coordinator_name: string
+  session_date: string
+  session_time: string
+  crew_type: string
+  boat_type: string
+  launch_supervision: string
+  visibility: string
+  river_level: string
+  water_conditions: string
+  air_temperature: string
+  wind_conditions: string
+  risk_actions: string
+  incoming_tide: string
+  created_at?: string
+  bookings?: Booking | null
+  members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
+}
 
 type ScheduleItem = {
   id: string
@@ -154,6 +222,14 @@ const getRoleLabel = (role: UserRole) => {
   return 'Guest'
 }
 
+const toDateInputValue = (value: string) => {
+  const date = new Date(value)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const urlBase64ToUint8Array = (value: string) => {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -198,7 +274,13 @@ function App() {
   )
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
   const [viewMode, setViewMode] = useState<
-    'schedule' | 'templates' | 'boats' | 'access' | 'profile' | 'pendingConfirmations'
+    | 'schedule'
+    | 'templates'
+    | 'boats'
+    | 'access'
+    | 'profile'
+    | 'pendingConfirmations'
+    | 'riskAssessments'
   >('schedule')
 
   const [showNewBooking, setShowNewBooking] = useState(false)
@@ -211,6 +293,9 @@ function App() {
   const [endTime, setEndTime] = useState('08:00')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
+  const [riskAssessmentBooking, setRiskAssessmentBooking] = useState<Booking | null>(null)
+  const [editingRiskAssessment, setEditingRiskAssessment] = useState<RiskAssessment | null>(null)
+  const [riskAssessments, setRiskAssessments] = useState<RiskAssessment[]>([])
   const [boatForm, setBoatForm] = useState({
     code: '',
     name: '',
@@ -236,6 +321,22 @@ function App() {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
+  const [isRiskAssessmentLoading, setIsRiskAssessmentLoading] = useState(false)
+  const [riskAssessmentForm, setRiskAssessmentForm] = useState({
+    coordinator_name: '',
+    session_date: '',
+    session_time: '',
+    crew_type: '',
+    boat_type: '',
+    launch_supervision: '',
+    visibility: '',
+    river_level: '',
+    water_conditions: '',
+    air_temperature: '',
+    wind_conditions: '',
+    risk_actions: '',
+    incoming_tide: '',
+  })
   const [accessForm, setAccessForm] = useState({
     email: '',
     name: '',
@@ -605,6 +706,122 @@ function App() {
     )
   }, [])
 
+  const fetchRiskAssessments = useCallback(async () => {
+    if (!session) {
+      setRiskAssessments([])
+      return
+    }
+
+    let query = supabase
+      .from('risk_assessments')
+      .select(
+        'id, booking_id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision, visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions, incoming_tide, created_at, bookings(id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)), members(name,email)',
+      )
+      .order('session_date', { ascending: false })
+      .order('session_time', { ascending: false })
+
+    if (!isAdmin && currentMember) {
+      query = query.eq('member_id', currentMember.id)
+    }
+
+    const { data, error } = await query
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setRiskAssessments(
+      (data ?? []).map((assessment) => ({
+        ...assessment,
+        bookings: Array.isArray(assessment.bookings) ? assessment.bookings[0] ?? null : assessment.bookings ?? null,
+        members: Array.isArray(assessment.members) ? assessment.members[0] ?? null : assessment.members ?? null,
+      })),
+    )
+  }, [currentMember, isAdmin, session])
+
+  const resetRiskAssessmentForm = () => {
+    setRiskAssessmentForm({
+      coordinator_name: '',
+      session_date: '',
+      session_time: '',
+      crew_type: '',
+      boat_type: '',
+      launch_supervision: '',
+      visibility: '',
+      river_level: '',
+      water_conditions: '',
+      air_temperature: '',
+      wind_conditions: '',
+      risk_actions: '',
+      incoming_tide: '',
+    })
+    setRiskAssessmentBooking(null)
+    setEditingRiskAssessment(null)
+    setIsRiskAssessmentLoading(false)
+  }
+
+  const openRiskAssessmentEditor = async (booking: Booking) => {
+    setError(null)
+    setStatus(null)
+    setRiskAssessmentBooking(booking)
+    setEditingRiskAssessment(null)
+    setIsRiskAssessmentLoading(true)
+
+    const defaultForm = {
+      coordinator_name: currentMember?.name ?? getRelatedName(booking.members) ?? '',
+      session_date: toDateInputValue(booking.start_time),
+      session_time: formatTimeInput(booking.start_time),
+      crew_type: '',
+      boat_type: '',
+      launch_supervision: '',
+      visibility: '',
+      river_level: '',
+      water_conditions: '',
+      air_temperature: '',
+      wind_conditions: '',
+      risk_actions: '',
+      incoming_tide: '',
+    }
+
+    const { data, error } = await supabase
+      .from('risk_assessments')
+      .select(
+        'id, booking_id, member_id, coordinator_name, session_date, session_time, crew_type, boat_type, launch_supervision, visibility, river_level, water_conditions, air_temperature, wind_conditions, risk_actions, incoming_tide',
+      )
+      .eq('booking_id', booking.id)
+      .maybeSingle()
+
+    if (error) {
+      setError(error.message)
+      setRiskAssessmentForm(defaultForm)
+      setIsRiskAssessmentLoading(false)
+      return
+    }
+
+    if (data) {
+      setEditingRiskAssessment(data)
+      setRiskAssessmentForm({
+        coordinator_name: data.coordinator_name,
+        session_date: data.session_date,
+        session_time: data.session_time,
+        crew_type: data.crew_type,
+        boat_type: data.boat_type,
+        launch_supervision: data.launch_supervision,
+        visibility: data.visibility,
+        river_level: data.river_level,
+        water_conditions: data.water_conditions,
+        air_temperature: data.air_temperature,
+        wind_conditions: data.wind_conditions,
+        risk_actions: data.risk_actions,
+        incoming_tide: data.incoming_tide,
+      })
+    } else {
+      setRiskAssessmentForm(defaultForm)
+    }
+
+    setIsRiskAssessmentLoading(false)
+  }
+
   const fetchPendingBookings = useCallback(async () => {
     if (!session || !currentMember) {
       setPendingBookings([])
@@ -728,10 +945,20 @@ function App() {
   }, [canManageAccess, fetchAllowedMembers, viewMode])
 
   useEffect(() => {
-    if ((viewMode === 'templates' && !isAdmin) || (viewMode === 'access' && !canManageAccess)) {
+    if (
+      (viewMode === 'templates' && !isAdmin) ||
+      (viewMode === 'access' && !canManageAccess) ||
+      (viewMode === 'riskAssessments' && !isAdmin)
+    ) {
       setViewMode('schedule')
     }
   }, [canManageAccess, isAdmin, viewMode])
+
+  useEffect(() => {
+    if (viewMode === 'riskAssessments' && session) {
+      fetchRiskAssessments()
+    }
+  }, [fetchRiskAssessments, session, viewMode])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -1775,6 +2002,42 @@ function App() {
     setPendingActionId(null)
   }
 
+  const handleSaveRiskAssessment = async () => {
+    if (!riskAssessmentBooking || !currentMember) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const requiredValues = Object.values(riskAssessmentForm).map((value) => value.trim())
+    if (requiredValues.some((value) => !value)) {
+      setError('Complete all risk assessment fields.')
+      return
+    }
+
+    const payload = {
+      booking_id: riskAssessmentBooking.id,
+      member_id: currentMember.id,
+      ...riskAssessmentForm,
+      updated_at: new Date().toISOString(),
+    }
+
+    const query = editingRiskAssessment
+      ? supabase.from('risk_assessments').update(payload).eq('id', editingRiskAssessment.id)
+      : supabase.from('risk_assessments').insert(payload)
+
+    const { error } = await query
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus(editingRiskAssessment ? 'Risk assessment updated.' : 'Risk assessment created.')
+    await fetchRiskAssessments()
+    resetRiskAssessmentForm()
+  }
+
   const handleSaveAccess = async () => {
     setError(null)
     setStatus(null)
@@ -2018,6 +2281,19 @@ function App() {
                       }}
                     >
                       Manage Accesses
+                    </button>
+                    <button
+                      className="menu-item"
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setShowNewBooking(false)
+                        setEditingBooking(null)
+                        setEditingTemplate(null)
+                        setViewMode('riskAssessments')
+                      }}
+                    >
+                      Risk Assessments
                     </button>
                   </>
                 ) : isCoordinator ? (
@@ -2358,6 +2634,45 @@ function App() {
                     )}
                   </div>
                 </section>
+              </div>
+            ) : viewMode === 'riskAssessments' ? (
+              <div className="access-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Time</th>
+                      <th>Coordinator</th>
+                      <th>Crew type</th>
+                      <th>Boat type</th>
+                      <th>Booking</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {riskAssessments.map((assessment) => {
+                      const booking = assessment.bookings
+                      const boatName = booking ? getRelatedName(booking.boats) ?? 'Boat' : 'Boat'
+                      const memberName = booking ? getRelatedName(booking.members) ?? 'Member' : 'Member'
+                      return (
+                        <tr
+                          key={assessment.id}
+                          onClick={() => {
+                            if (booking) {
+                              openRiskAssessmentEditor(booking)
+                            }
+                          }}
+                        >
+                          <td>{assessment.session_date}</td>
+                          <td>{assessment.session_time}</td>
+                          <td>{assessment.coordinator_name}</td>
+                          <td>{assessment.crew_type}</td>
+                          <td>{assessment.boat_type}</td>
+                          <td>{`${boatName} / ${memberName}`}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             ) : viewMode === 'profile' ? (
               <div className="page-pad">
@@ -3079,6 +3394,15 @@ function App() {
                     {editingBooking ? 'Save changes' : 'Validate booking'}
                   </button>
                   {editingBooking ? (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={() => openRiskAssessmentEditor(editingBooking)}
+                    >
+                      Create Risk Assessment
+                    </button>
+                  ) : null}
+                  {editingBooking ? (
                     <button className="button ghost danger" onClick={handleDeleteBooking}>
                       Delete booking
                     </button>
@@ -3086,6 +3410,237 @@ function App() {
                 </div>
                 <p className="helper">Booking will be checked against existing reservations.</p>
               </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {session && riskAssessmentBooking ? (
+        <div className="modal-backdrop" onClick={resetRiskAssessmentForm}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingRiskAssessment ? 'Edit Risk Assessment' : 'Create Risk Assessment'}</h3>
+              <button className="button ghost" type="button" onClick={resetRiskAssessmentForm}>
+                Close
+              </button>
+            </div>
+            {isRiskAssessmentLoading ? (
+              <p className="empty-state">Loading risk assessment...</p>
+            ) : (
+              <div className="form-grid">
+                <label className="field">
+                  <span>Coach/Crew Coordinator Name</span>
+                  <input
+                    value={riskAssessmentForm.coordinator_name}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        coordinator_name: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Date of Session</span>
+                  <input
+                    type="date"
+                    value={riskAssessmentForm.session_date}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        session_date: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Time of Session</span>
+                  <input
+                    type="time"
+                    value={riskAssessmentForm.session_time}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        session_time: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Type of crew which is going out</span>
+                  <select
+                    value={riskAssessmentForm.crew_type}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({ ...prev, crew_type: event.target.value }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {CREW_TYPE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Type of boats going out</span>
+                  <select
+                    value={riskAssessmentForm.boat_type}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({ ...prev, boat_type: event.target.value }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {BOAT_TYPE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Will the boats be followed by a launch</span>
+                  <select
+                    value={riskAssessmentForm.launch_supervision}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        launch_supervision: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {LAUNCH_SUPERVISION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Visibility</span>
+                  <select
+                    value={riskAssessmentForm.visibility}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({ ...prev, visibility: event.target.value }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {VISIBILITY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>River level at Ironbridge</span>
+                  <select
+                    value={riskAssessmentForm.river_level}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({ ...prev, river_level: event.target.value }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {RIVER_LEVEL_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Subjective assessment of water conditions at time of boating</span>
+                  <select
+                    value={riskAssessmentForm.water_conditions}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        water_conditions: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {WATER_CONDITION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Air Temperature</span>
+                  <select
+                    value={riskAssessmentForm.air_temperature}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        air_temperature: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {AIR_TEMPERATURE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Wind Conditions</span>
+                  <select
+                    value={riskAssessmentForm.wind_conditions}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        wind_conditions: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {WIND_CONDITION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Actions taken to reduce risks identified above</span>
+                  <textarea
+                    value={riskAssessmentForm.risk_actions}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        risk_actions: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Is there an incoming tide whilst you are due to be out?</span>
+                  <select
+                    value={riskAssessmentForm.incoming_tide}
+                    onChange={(event) =>
+                      setRiskAssessmentForm((prev) => ({
+                        ...prev,
+                        incoming_tide: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select</option>
+                    {INCOMING_TIDE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="button primary" type="button" onClick={handleSaveRiskAssessment}>
+                  {editingRiskAssessment ? 'Save Risk Assessment' : 'Create Risk Assessment'}
+                </button>
+              </div>
             )}
           </div>
         </div>
