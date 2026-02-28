@@ -744,6 +744,31 @@ body {
   gap: 6px;
 }
 
+.selected-boat-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.selected-boat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+.selected-boat-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 .boat-option {
   display: flex;
   align-items: center;

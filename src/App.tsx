@@ -939,6 +939,27 @@ function App() {
     })
   }
 
+  const fetchRaceEventConflictingBoatIds = useCallback(
+    async (eventDate: string, boatIds: string[]) => {
+      if (boatIds.length === 0) {
+        return []
+      }
+
+      const { data, error } = await supabase
+        .from('race_event_boats')
+        .select('boat_id, race_events!inner(event_date)')
+        .in('boat_id', boatIds)
+        .eq('race_events.event_date', eventDate)
+
+      if (error) {
+        throw new Error(error.message)
+      }
+
+      return Array.from(new Set((data ?? []).map((row) => row.boat_id)))
+    },
+    [],
+  )
+
   const resetRiskAssessmentForm = () => {
     setRiskAssessmentForm({
       coordinator_name: '',
@@ -2195,6 +2216,21 @@ function App() {
       return
     }
 
+    let raceEventConflictBoatIds: string[] = []
+    try {
+      raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(selectedDate, selectedBoatIds)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to check race event conflicts.')
+      return
+    }
+
+    if (raceEventConflictBoatIds.length > 0) {
+      const conflictNames = raceEventConflictBoatIds
+        .map((boatId) => boats.find((boat) => boat.id === boatId)?.name ?? 'Boat')
+      setError(`Race event conflict for: ${conflictNames.join(', ')}.`)
+      return
+    }
+
     let conflictQuery = supabase
       .from('bookings')
       .select('id, boat_id')
@@ -2468,6 +2504,13 @@ function App() {
           throw new Error('This template has no boat assigned. Add a boat before confirming it.')
         }
 
+        const raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(occurrenceDate, [
+          template.boat_id,
+        ])
+        if (raceEventConflictBoatIds.length > 0) {
+          throw new Error('This boat is unavailable because it is assigned to a race event.')
+        }
+
         const startTime = normalizeTime(template.start_time)
         const endTime = normalizeTime(template.end_time)
         const bookingStart = new Date(`${occurrenceDate}T${startTime}:00`)
@@ -2549,6 +2592,7 @@ function App() {
       ])
     },
     [
+      fetchRaceEventConflictingBoatIds,
       fetchPendingBookings,
       fetchPendingTemplateConfirmations,
       refreshScheduleDay,
@@ -2781,6 +2825,10 @@ function App() {
       return
     }
 
+    const previousBoatIds = Array.from(
+      new Set((editingRaceEvent?.race_event_boats ?? []).map((link) => link.boat_id)),
+    )
+
     let raceEventId = editingRaceEvent?.id ?? null
 
     if (editingRaceEvent) {
@@ -2840,6 +2888,24 @@ function App() {
     if (insertLinksError) {
       setError(insertLinksError.message)
       return
+    }
+
+    const accessToken = await getAccessToken()
+    if (accessToken) {
+      await fetch('/api/push/notify-race-event-conflicts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          eventDate,
+          title,
+          boatIds,
+          previousBoatIds,
+          raceEventId,
+        }),
+      }).catch(() => undefined)
     }
 
     setStatus(editingRaceEvent ? 'Race event updated.' : 'Race event created.')
@@ -4711,6 +4777,37 @@ function App() {
               </label>
               <div className="field">
                 <span>Boats</span>
+                <div className="selected-boat-list">
+                  {raceEventForm.boatIds.length === 0 ? (
+                    <span className="chip muted">No boats selected</span>
+                  ) : (
+                    raceEventForm.boatIds.map((boatId) => {
+                      const boat = boats.find((item) => item.id === boatId)
+                      const label = boat
+                        ? boat.type
+                          ? `${boat.type} ${boat.name}`
+                          : boat.name
+                        : boatId
+                      return (
+                        <button
+                          key={boatId}
+                          type="button"
+                          className="selected-boat-row"
+                          disabled={raceEventReadOnly}
+                          onClick={() =>
+                            setRaceEventForm((prev) => ({
+                              ...prev,
+                              boatIds: prev.boatIds.filter((id) => id !== boatId),
+                            }))
+                          }
+                        >
+                          <span>{label}</span>
+                          <span aria-hidden="true">x</span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
                 <div className="boat-list">
                   {boats.map((boat) => {
                     const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
