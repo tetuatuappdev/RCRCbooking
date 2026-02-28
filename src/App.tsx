@@ -2953,14 +2953,12 @@ function App() {
                     </div>
                     {isPendingLoading ? (
                       <p className="empty-state">Loading pending confirmations...</p>
-                    ) : pendingBookings.length === 0 ? (
-                      pendingTemplateConfirmations.length === 0 ? (
-                        <p className="empty-state">
-                          {isAdmin
-                            ? 'No bookings are waiting for confirmation.'
-                            : 'All completed bookings have been confirmed.'}
-                        </p>
-                      ) : null
+                    ) : pendingBookings.length === 0 && pendingTemplateConfirmations.length === 0 ? (
+                      <p className="empty-state">
+                        {isAdmin
+                          ? 'No bookings are waiting for confirmation.'
+                          : 'All completed bookings have been confirmed.'}
+                      </p>
                     ) : isAdmin && selectedPendingBooking ? (
                       <div className="form-grid">
                         <button
