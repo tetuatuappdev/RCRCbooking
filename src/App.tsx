@@ -384,6 +384,8 @@ function App() {
   const [editingRiskAssessment, setEditingRiskAssessment] = useState<RiskAssessment | null>(null)
   const [linkedRiskAssessment, setLinkedRiskAssessment] = useState<RiskAssessment | null>(null)
   const [availableRiskAssessments, setAvailableRiskAssessments] = useState<RiskAssessment[]>([])
+  const [riskAssessmentReadOnly, setRiskAssessmentReadOnly] = useState(false)
+  const [bookingHasLinkedRiskAssessment, setBookingHasLinkedRiskAssessment] = useState(false)
   const [riskAssessments, setRiskAssessments] = useState<RiskAssessment[]>([])
   const [boatForm, setBoatForm] = useState({
     code: '',
@@ -858,13 +860,17 @@ function App() {
     setLinkedRiskAssessment(null)
     setAvailableRiskAssessments([])
     setIsRiskAssessmentLoading(false)
+    setRiskAssessmentReadOnly(false)
   }
 
-  const openRiskAssessmentEditor = async (booking: Booking) => {
+  const openRiskAssessmentEditor = async (
+    booking: Booking,
+    options?: { readOnly?: boolean },
+  ) => {
     setError(null)
     setStatus(null)
 
-    if (!canOpenRiskAssessment(booking)) {
+    if (!options?.readOnly && !canOpenRiskAssessment(booking)) {
       setError(getRiskAssessmentAvailabilityMessage(booking))
       return
     }
@@ -874,6 +880,7 @@ function App() {
     setLinkedRiskAssessment(null)
     setAvailableRiskAssessments([])
     setIsRiskAssessmentLoading(true)
+    setRiskAssessmentReadOnly(Boolean(options?.readOnly))
     const ownerMemberId = booking.member_id ?? currentMember?.id ?? ''
 
     const defaultForm = {
@@ -974,6 +981,11 @@ function App() {
         incoming_tide: normalizedLinked.incoming_tide,
       })
     } else {
+      if (options?.readOnly) {
+        setError('No linked risk assessment was found for this booking.')
+        resetRiskAssessmentForm()
+        return
+      }
       setRiskAssessmentForm(defaultForm)
     }
 
@@ -1229,6 +1241,35 @@ function App() {
   }, [currentMember, isAdmin, viewMode])
 
   useEffect(() => {
+    if (!editingBooking) {
+      setBookingHasLinkedRiskAssessment(false)
+      return
+    }
+
+    let cancelled = false
+
+    supabase
+      .from('booking_risk_assessments')
+      .select('id')
+      .eq('booking_id', editingBooking.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) {
+          return
+        }
+        if (error) {
+          setBookingHasLinkedRiskAssessment(false)
+          return
+        }
+        setBookingHasLinkedRiskAssessment(Boolean(data))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [editingBooking])
+
+  useEffect(() => {
     if (viewMode !== 'schedule' || !session) {
       return
     }
@@ -1357,7 +1398,7 @@ function App() {
     const fromBookings: ScheduleItem[] = bookings.map((booking) => ({
       ...booking,
       isTemplate: false,
-    }))
+    })).filter((booking) => booking.usage_status !== 'cancelled')
 
     return [...fromTemplates, ...fromBookings]
   }, [bookings, templateBookings, selectedDate, templateExceptions, viewMode])
@@ -3796,7 +3837,9 @@ function App() {
                   : editingTemplate
                     ? 'Template booking'
                     : editingBooking
-                      ? 'Edit booking'
+                      ? isPastBooking(editingBooking)
+                        ? 'View booking'
+                        : 'Edit booking'
                       : viewMode === 'templates'
                         ? 'New template booking'
                         : 'New booking'}
@@ -4075,6 +4118,15 @@ function App() {
                     Past bookings and bookings waiting for confirmation are read-only.
                   </p>
                 ) : null}
+                {isEditingBookingLocked && editingBooking && bookingHasLinkedRiskAssessment ? (
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => openRiskAssessmentEditor(editingBooking, { readOnly: true })}
+                  >
+                    Risk Assessment
+                  </button>
+                ) : null}
               </>
             )}
           </div>
@@ -4086,8 +4138,10 @@ function App() {
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>
-                {linkedRiskAssessment
-                  ? 'Edit Linked Risk Assessment'
+                {riskAssessmentReadOnly
+                  ? 'View Risk Assessment'
+                  : linkedRiskAssessment
+                    ? 'Edit Linked Risk Assessment'
                   : editingRiskAssessment
                     ? 'Edit Risk Assessment'
                     : 'Create Risk Assessment'}
@@ -4100,7 +4154,7 @@ function App() {
               <p className="empty-state">Loading risk assessment...</p>
             ) : (
               <div className="form-grid">
-                {!linkedRiskAssessment && availableRiskAssessments.length > 0 ? (
+                {!riskAssessmentReadOnly && !linkedRiskAssessment && availableRiskAssessments.length > 0 ? (
                   <div className="field">
                     <span>Existing risk assessments for this time slot</span>
                     <div className="boat-list">
@@ -4124,6 +4178,7 @@ function App() {
                   <span>Coach/Crew Coordinator Name</span>
                   <input
                     value={riskAssessmentForm.coordinator_name}
+                    readOnly={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4137,6 +4192,7 @@ function App() {
                   <input
                     type="date"
                     value={riskAssessmentForm.session_date}
+                    readOnly={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4150,6 +4206,7 @@ function App() {
                   <input
                     type="time"
                     value={riskAssessmentForm.session_time}
+                    readOnly={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4162,6 +4219,7 @@ function App() {
                   <span>Type of crew which is going out</span>
                   <select
                     value={riskAssessmentForm.crew_type}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({ ...prev, crew_type: event.target.value }))
                     }
@@ -4178,6 +4236,7 @@ function App() {
                   <span>Type of boats going out</span>
                   <select
                     value={riskAssessmentForm.boat_type}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({ ...prev, boat_type: event.target.value }))
                     }
@@ -4194,6 +4253,7 @@ function App() {
                   <span>Will the boats be followed by a launch</span>
                   <select
                     value={riskAssessmentForm.launch_supervision}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4213,6 +4273,7 @@ function App() {
                   <span>Visibility</span>
                   <select
                     value={riskAssessmentForm.visibility}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({ ...prev, visibility: event.target.value }))
                     }
@@ -4229,6 +4290,7 @@ function App() {
                   <span>River level at Ironbridge</span>
                   <select
                     value={riskAssessmentForm.river_level}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({ ...prev, river_level: event.target.value }))
                     }
@@ -4245,6 +4307,7 @@ function App() {
                   <span>Subjective assessment of water conditions at time of boating</span>
                   <select
                     value={riskAssessmentForm.water_conditions}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4264,6 +4327,7 @@ function App() {
                   <span>Air Temperature</span>
                   <select
                     value={riskAssessmentForm.air_temperature}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4283,6 +4347,7 @@ function App() {
                   <span>Wind Conditions</span>
                   <select
                     value={riskAssessmentForm.wind_conditions}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4302,6 +4367,7 @@ function App() {
                   <span>Actions taken to reduce risks identified above</span>
                   <textarea
                     value={riskAssessmentForm.risk_actions}
+                    readOnly={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4314,6 +4380,7 @@ function App() {
                   <span>Is there an incoming tide whilst you are due to be out?</span>
                   <select
                     value={riskAssessmentForm.incoming_tide}
+                    disabled={riskAssessmentReadOnly}
                     onChange={(event) =>
                       setRiskAssessmentForm((prev) => ({
                         ...prev,
@@ -4329,11 +4396,13 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <button className="button primary" type="button" onClick={handleSaveRiskAssessment}>
-                  {linkedRiskAssessment || editingRiskAssessment
-                    ? 'Save Risk Assessment'
-                    : 'Create New Risk Assessment'}
-                </button>
+                {!riskAssessmentReadOnly ? (
+                  <button className="button primary" type="button" onClick={handleSaveRiskAssessment}>
+                    {linkedRiskAssessment || editingRiskAssessment
+                      ? 'Save Risk Assessment'
+                      : 'Create New Risk Assessment'}
+                  </button>
+                ) : null}
               </div>
             )}
           </div>

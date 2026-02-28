@@ -931,8 +931,13 @@ select:focus {
 }
 
 .booking-pill--past {
-  background: rgba(96, 165, 250, 0.32);
-  border-color: rgba(30, 64, 175, 0.7);
+  background: rgba(30, 64, 175, 0.82);
+  border-color: rgba(15, 23, 42, 0.9);
+  color: #eff6ff;
+}
+
+.booking-pill--past span {
+  color: rgba(239, 246, 255, 0.88);
 }
 
 .booking-pill--pending {
