@@ -930,6 +930,16 @@ select:focus {
   border-color: rgba(249, 115, 22, 0.5);
 }
 
+.booking-pill--past {
+  background: rgba(96, 165, 250, 0.32);
+  border-color: rgba(30, 64, 175, 0.7);
+}
+
+.booking-pill--pending {
+  background: rgba(191, 219, 254, 0.45);
+  border-color: rgba(37, 99, 235, 0.55);
+}
+
 .templates-mode .booking-pill {
   background: rgba(251, 146, 60, 0.18);
   border-color: rgba(249, 115, 22, 0.5);

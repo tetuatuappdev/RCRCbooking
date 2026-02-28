@@ -271,6 +271,17 @@ const getRiskAssessmentAvailabilityMessage = (booking: Booking) => {
   })}.`
 }
 
+const isPastBooking = (booking: { start_time: string }) => {
+  const bookingStart = new Date(booking.start_time).getTime()
+  if (Number.isNaN(bookingStart)) {
+    return false
+  }
+  return bookingStart < Date.now()
+}
+
+const isPendingBooking = (booking: { usage_status?: Booking['usage_status'] }) =>
+  booking.usage_status === 'pending'
+
 const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
   if (!value) {
     return null
@@ -412,6 +423,7 @@ function App() {
   const isCoordinator = userRole === 'coordinator'
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
+  const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
     !isAdmin && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
   const shouldShowPushPrompt =
@@ -1290,7 +1302,11 @@ function App() {
     )
 
     const fromTemplates: ScheduleItem[] = templateBookings
-      .filter((template) => viewMode === 'templates' || !excludedTemplateIds.has(template.id))
+      .filter(
+        (template) =>
+          viewMode === 'templates' ||
+          (!excludedTemplateIds.has(template.id) && selectedDate >= getTodayString()),
+      )
       .map((template) => {
         const startTime = normalizeTime(template.start_time)
         const endTime = normalizeTime(template.end_time)
@@ -1398,6 +1414,20 @@ function App() {
     }
     return Boolean(currentMember && booking.member_id === currentMember.id)
   }
+
+  const canModifyBooking = (booking: Booking) => {
+    if (!canEditBooking(booking)) {
+      return false
+    }
+    if (isPendingBooking(booking)) {
+      return false
+    }
+    if (isPastBooking(booking)) {
+      return false
+    }
+    return true
+  }
+  const isEditingBookingLocked = editingBooking ? !canModifyBooking(editingBooking) : false
 
   const canEditTemplate = (item: { member_id: string | null }) => {
     if (isGuest) {
@@ -1973,9 +2003,20 @@ function App() {
     const startDate = toDateTime(selectedDate, startTime)
     const endDate = toDateTime(selectedDate, endTime)
     const minStart = toDateTime(selectedDate, '07:30')
+    const now = new Date()
 
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       setError('Enter a valid start and end time.')
+      return
+    }
+
+    if (editingBooking && !canModifyBooking(editingBooking)) {
+      setError('Past bookings and bookings waiting for confirmation cannot be modified.')
+      return
+    }
+
+    if (startDate < now) {
+      setError('You cannot create or move a booking into the past.')
       return
     }
 
@@ -2108,8 +2149,8 @@ function App() {
     setError(null)
     setStatus(null)
 
-    if (!canEditBooking(editingBooking)) {
-      setError('You can only delete your own bookings.')
+    if (!canModifyBooking(editingBooking)) {
+      setError('Past bookings and bookings waiting for confirmation cannot be deleted.')
       return
     }
 
@@ -3433,6 +3474,10 @@ function App() {
                           const canOpenBooking = booking.isTemplate
                             ? canOpenTemplate
                             : canEditBooking(booking as Booking)
+                          const isPastRenderedBooking =
+                            !booking.isTemplate && isPastBooking(booking as Booking)
+                          const isPendingRenderedBooking =
+                            !booking.isTemplate && isPendingBooking(booking as Booking)
                           const handleBookingClick = () => {
                             if (!canOpenBooking) {
                               return
@@ -3474,6 +3519,12 @@ function App() {
                               type="button"
                               className={`booking-pill gantt-pill${
                                 booking.isTemplate ? ' template' : ''
+                              }${
+                                isPastRenderedBooking && !isPendingRenderedBooking
+                                  ? ' booking-pill--past'
+                                  : ''
+                              }${
+                                isPendingRenderedBooking ? ' booking-pill--pending' : ''
                               }`}
                               style={{
                                 transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
@@ -3668,7 +3719,8 @@ function App() {
       viewMode !== 'boats' &&
       viewMode !== 'access' &&
       viewMode !== 'profile' &&
-      viewMode !== 'pendingConfirmations'
+      viewMode !== 'pendingConfirmations' &&
+      (viewMode !== 'schedule' || !isSelectedDateInPast)
         ? createPortal(
             <button
               className="fab"
@@ -3773,6 +3825,7 @@ function App() {
                       <select
                         value={bookingMemberId}
                         onChange={(event) => setBookingMemberId(event.target.value)}
+                        disabled={isEditingBookingLocked}
                       >
                         <option value="">Select a member</option>
                         {members.map((member) => (
@@ -3858,6 +3911,7 @@ function App() {
                       <select
                         value={bookingBoatId}
                         onChange={(event) => setBookingBoatId(event.target.value)}
+                        disabled={isEditingBookingLocked}
                         onFocus={refreshBoatAccess}
                       >
                         <option value="">Select a boat</option>
@@ -3876,6 +3930,7 @@ function App() {
                         placeholder="Search boat type or name"
                         value={boatSearch}
                         onChange={(event) => setBoatSearch(event.target.value)}
+                        disabled={isEditingBookingLocked}
                         onFocus={refreshBoatAccess}
                       />
                       <div className="boat-chips">
@@ -3915,6 +3970,7 @@ function App() {
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={isEditingBookingLocked}
                                 onChange={(event) => {
                                   const next = event.target.checked
                                   setBookingBoatIds((prev) =>
@@ -3935,6 +3991,7 @@ function App() {
                       type="time"
                       value={startTime}
                       min="07:30"
+                      disabled={isEditingBookingLocked}
                       onChange={(event) => {
                         const nextStart = event.target.value
                         setStartTime(nextStart)
@@ -3953,10 +4010,11 @@ function App() {
                       type="time"
                       value={endTime}
                       min="07:30"
+                      disabled={isEditingBookingLocked}
                       onChange={(event) => setEndTime(event.target.value)}
                     />
                   </label>
-                  <button className="button primary" onClick={handleSaveBooking}>
+                  <button className="button primary" onClick={handleSaveBooking} disabled={isEditingBookingLocked}>
                     {editingBooking ? 'Save changes' : 'Validate booking'}
                   </button>
                   {editingBooking ? (
@@ -3964,9 +4022,11 @@ function App() {
                       className="button ghost"
                       type="button"
                       onClick={() => openRiskAssessmentEditor(editingBooking)}
-                      disabled={!canOpenRiskAssessment(editingBooking)}
+                      disabled={isEditingBookingLocked || !canOpenRiskAssessment(editingBooking)}
                       title={
-                        canOpenRiskAssessment(editingBooking)
+                        isEditingBookingLocked
+                          ? 'Past bookings and bookings waiting for confirmation are read-only.'
+                          : canOpenRiskAssessment(editingBooking)
                           ? undefined
                           : getRiskAssessmentAvailabilityMessage(editingBooking)
                       }
@@ -3975,11 +4035,20 @@ function App() {
                     </button>
                   ) : null}
                   {editingBooking ? (
-                    <button className="button ghost danger" onClick={handleDeleteBooking}>
+                    <button
+                      className="button ghost danger"
+                      onClick={handleDeleteBooking}
+                      disabled={isEditingBookingLocked}
+                    >
                       Delete booking
                     </button>
                   ) : null}
                 </div>
+                {isEditingBookingLocked ? (
+                  <p className="helper">
+                    Past bookings and bookings waiting for confirmation are read-only.
+                  </p>
+                ) : null}
                 <p className="helper">Booking will be checked against existing reservations.</p>
               </>
             )}
