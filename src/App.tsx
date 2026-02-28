@@ -2271,7 +2271,12 @@ function App() {
     }
 
     setStatus(usageStatus === 'confirmed' ? 'Outing confirmed.' : 'Booking marked as not used.')
-    await fetchPendingBookings()
+    await Promise.all([
+      fetchPendingBookings(),
+      viewMode === 'schedule' && selectedDate === booking.start_time.slice(0, 10)
+        ? refreshScheduleDay(selectedDate)
+        : Promise.resolve(),
+    ])
     setPendingActionId(null)
   }
 
