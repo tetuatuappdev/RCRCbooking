@@ -285,6 +285,19 @@ const isPendingBooking = (booking: { usage_status?: Booking['usage_status'] }) =
 const isSettledBooking = (booking: { usage_status?: Booking['usage_status'] }) =>
   booking.usage_status === 'confirmed' || booking.usage_status === 'cancelled'
 
+const getBookingUsageLabel = (booking: { usage_status?: Booking['usage_status'] }) => {
+  if (booking.usage_status === 'confirmed') {
+    return 'Outing status: confirmed - outing happened.'
+  }
+  if (booking.usage_status === 'cancelled') {
+    return 'Outing status: cancelled - outing did not happen.'
+  }
+  if (booking.usage_status === 'pending') {
+    return 'Outing status: pending confirmation.'
+  }
+  return 'Outing status: scheduled.'
+}
+
 const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
   if (!value) {
     return null
@@ -3831,6 +3844,9 @@ function App() {
             ) : viewMode === 'templates' ? (
               <>
                 <div className="form-grid">
+                  {editingBooking ? (
+                    <p className="helper">{getBookingUsageLabel(editingBooking)}</p>
+                  ) : null}
                   {isAdmin ? (
                     <label className="field">
                       <span>Member</span>
@@ -4059,7 +4075,6 @@ function App() {
                     Past bookings and bookings waiting for confirmation are read-only.
                   </p>
                 ) : null}
-                <p className="helper">Booking will be checked against existing reservations.</p>
               </>
             )}
           </div>
