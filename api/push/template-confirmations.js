@@ -79,7 +79,11 @@ export default async function handler(req, res) {
 
   const today = DateTime.now().setZone('Europe/London').startOf('day')
   const notificationDate = today.plus({ days: 3 }).toISODate()
-  const autoCancelDates = [today.plus({ days: 1 }).toISODate(), today.plus({ days: 2 }).toISODate()]
+  const autoCancelDates = [
+    today.toISODate(),
+    today.plus({ days: 1 }).toISODate(),
+    today.plus({ days: 2 }).toISODate(),
+  ]
   const relevantDates = [notificationDate, ...autoCancelDates]
 
   const { data: templates, error: templatesError } = await supabaseAdmin
