@@ -298,6 +298,16 @@ const getBookingUsageLabel = (booking: { usage_status?: Booking['usage_status'] 
   return 'Outing status: scheduled.'
 }
 
+const getBoatTypeShortLabel = (value: string) => {
+  if (value.startsWith('Large boat')) {
+    return 'Large'
+  }
+  if (value.startsWith('Small boat')) {
+    return 'Small'
+  }
+  return value
+}
+
 const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
   if (!value) {
     return null
@@ -3318,7 +3328,7 @@ function App() {
                           key={assessment.id}
                           onClick={() => {
                             if (firstBooking) {
-                              openRiskAssessmentEditor(firstBooking)
+                              openRiskAssessmentEditor(firstBooking, { readOnly: true })
                             }
                           }}
                         >
@@ -3326,7 +3336,7 @@ function App() {
                           <td>{assessment.session_time}</td>
                           <td>{assessment.coordinator_name}</td>
                           <td>{assessment.crew_type}</td>
-                          <td>{assessment.boat_type}</td>
+                          <td>{getBoatTypeShortLabel(assessment.boat_type)}</td>
                           <td>{`${boatName} / ${memberName} (${linkedBookings.length})`}</td>
                         </tr>
                       )
