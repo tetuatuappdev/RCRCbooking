@@ -82,6 +82,19 @@ create table if not exists template_exceptions (
   unique (template_id, exception_date)
 );
 
+create table if not exists template_confirmations (
+  id uuid primary key default gen_random_uuid(),
+  template_id uuid not null references booking_templates(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  occurrence_date date not null,
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
+  booking_id uuid unique references bookings(id) on delete set null,
+  notified_at timestamptz,
+  responded_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (template_id, occurrence_date)
+);
+
 create table if not exists boat_permissions (
   boat_id uuid not null references boats(id) on delete cascade,
   member_id uuid not null references members(id) on delete cascade,
@@ -160,6 +173,7 @@ alter table booking_templates enable row level security;
 alter table risk_assessments enable row level security;
 alter table booking_risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
+alter table template_confirmations enable row level security;
 alter table boat_permissions enable row level security;
 
 create policy "Members readable for login" on members
@@ -373,6 +387,43 @@ create policy "Template exceptions delete for authed" on template_exceptions
           where member_id = (select id from members where email = auth.email())
         )
       )
+    )
+  );
+
+create policy "Template confirmations readable for authed" on template_confirmations
+  for select to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Template confirmations insert for authed" on template_confirmations
+  for insert to authenticated
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Template confirmations update for authed" on template_confirmations
+  for update to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
     )
   );
 

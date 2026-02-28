@@ -106,6 +106,19 @@ type TemplateException = {
   exception_date: string
 }
 
+type TemplateConfirmation = {
+  id: string
+  template_id: string
+  member_id: string
+  occurrence_date: string
+  status: 'pending' | 'confirmed' | 'cancelled'
+  booking_id?: string | null
+  notified_at?: string | null
+  responded_at?: string | null
+  booking_templates?: TemplateBooking | TemplateBooking[] | null
+  members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
+}
+
 type BoatPermission = {
   boat_id: string
   member_id: string
@@ -243,6 +256,15 @@ const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) =
   return Array.isArray(value) ? value[0] ?? null : value
 }
 
+const normalizeTemplateBooking = (
+  value: TemplateBooking | TemplateBooking[] | null | undefined,
+) => {
+  if (!value) {
+    return null
+  }
+  return Array.isArray(value) ? value[0] ?? null : value
+}
+
 const urlBase64ToUint8Array = (value: string) => {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -267,6 +289,9 @@ function App() {
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [pendingBookings, setPendingBookings] = useState<Booking[]>([])
+  const [pendingTemplateConfirmations, setPendingTemplateConfirmations] = useState<
+    TemplateConfirmation[]
+  >([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
@@ -334,6 +359,7 @@ function App() {
   const [pushPromptDismissed, setPushPromptDismissed] = useState(false)
   const [isPendingLoading, setIsPendingLoading] = useState(false)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
+  const [pendingTemplateActionId, setPendingTemplateActionId] = useState<string | null>(null)
   const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [isRiskAssessmentLoading, setIsRiskAssessmentLoading] = useState(false)
@@ -364,7 +390,8 @@ function App() {
   const isCoordinator = userRole === 'coordinator'
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
-  const hasBlockingPendingConfirmations = !isAdmin && pendingBookings.length > 0
+  const hasBlockingPendingConfirmations =
+    !isAdmin && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
   const shouldShowPushPrompt =
     Boolean(session && currentMember) &&
     pushSupported &&
@@ -934,6 +961,39 @@ function App() {
     }
   }, [currentMember, isAdmin, selectedPendingBookingId, session])
 
+  const fetchPendingTemplateConfirmations = useCallback(async () => {
+    if (!session || !currentMember) {
+      setPendingTemplateConfirmations([])
+      return
+    }
+
+    let query = supabase
+      .from('template_confirmations')
+      .select(
+        'id, template_id, member_id, occurrence_date, status, booking_id, notified_at, responded_at, booking_templates(id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name,email)), members(name,email)',
+      )
+      .eq('status', 'pending')
+      .order('occurrence_date', { ascending: true })
+
+    if (!isAdmin) {
+      query = query.eq('member_id', currentMember.id)
+    }
+
+    const { data, error } = await query
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setPendingTemplateConfirmations(
+      (data ?? []).map((item) => ({
+        ...item,
+        booking_templates: normalizeTemplateBooking(item.booking_templates),
+        members: Array.isArray(item.members) ? item.members[0] ?? null : item.members ?? null,
+      })),
+    )
+  }, [currentMember, isAdmin, session])
+
   const filteredBoats = useMemo(() => {
     if (!boatTypeFilter) {
       return boats
@@ -993,21 +1053,26 @@ function App() {
     }
 
     fetchPendingBookings()
+    fetchPendingTemplateConfirmations()
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchPendingBookings()
+        fetchPendingTemplateConfirmations()
       }
     }
 
-    const interval = window.setInterval(fetchPendingBookings, 60000)
+    const interval = window.setInterval(() => {
+      fetchPendingBookings()
+      fetchPendingTemplateConfirmations()
+    }, 60000)
     document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [currentMember, fetchPendingBookings, session])
+  }, [currentMember, fetchPendingBookings, fetchPendingTemplateConfirmations, session])
 
   useEffect(() => {
     fetchBoatPermissions()
@@ -2077,6 +2142,168 @@ function App() {
     setPendingActionId(null)
   }
 
+  const handleResolveTemplateConfirmation = async (
+    confirmation: TemplateConfirmation,
+    nextStatus: 'confirmed' | 'cancelled',
+  ) => {
+    if (!currentMember) {
+      return
+    }
+
+    const template = normalizeTemplateBooking(confirmation.booking_templates)
+    if (!template) {
+      setError('Template booking not found.')
+      return
+    }
+
+    setPendingTemplateActionId(confirmation.id)
+    setError(null)
+    setStatus(null)
+
+    if (!isAdmin && confirmation.member_id !== currentMember.id) {
+      setError('You can only confirm your own template bookings.')
+      setPendingTemplateActionId(null)
+      return
+    }
+
+    const exceptionPayload = {
+      template_id: confirmation.template_id,
+      exception_date: confirmation.occurrence_date,
+    }
+
+    if (nextStatus === 'confirmed') {
+      if (!template.boat_id) {
+        setError('This template has no boat assigned. Add a boat before confirming it.')
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      const startTime = normalizeTime(template.start_time)
+      const endTime = normalizeTime(template.end_time)
+      const bookingStart = new Date(`${confirmation.occurrence_date}T${startTime}:00`)
+      const bookingEnd = new Date(`${confirmation.occurrence_date}T${endTime}:00`)
+
+      const { data: conflicts, error: conflictError } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('boat_id', template.boat_id)
+        .lt('start_time', bookingEnd.toISOString())
+        .gt('end_time', bookingStart.toISOString())
+
+      if (conflictError) {
+        setError(conflictError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      if (conflicts && conflicts.length > 0) {
+        setError('A booking already exists for this boat during that time.')
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      const { data: insertedBooking, error: insertBookingError } = await supabase
+        .from('bookings')
+        .insert({
+          boat_id: template.boat_id,
+          member_id: confirmation.member_id,
+          start_time: bookingStart.toISOString(),
+          end_time: bookingEnd.toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (insertBookingError) {
+        setError(insertBookingError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      const { error: exceptionError } = await supabase
+        .from('template_exceptions')
+        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+
+      if (exceptionError) {
+        setError(exceptionError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      const { error: updateError } = await supabase
+        .from('template_confirmations')
+        .update({
+          status: nextStatus,
+          booking_id: insertedBooking.id,
+          responded_at: new Date().toISOString(),
+        })
+        .eq('id', confirmation.id)
+
+      if (updateError) {
+        setError(updateError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      setStatus('Template converted to a booking.')
+    } else {
+      const { error: exceptionError } = await supabase
+        .from('template_exceptions')
+        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+
+      if (exceptionError) {
+        setError(exceptionError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      const { error: updateError } = await supabase
+        .from('template_confirmations')
+        .update({
+          status: nextStatus,
+          responded_at: new Date().toISOString(),
+        })
+        .eq('id', confirmation.id)
+
+      if (updateError) {
+        setError(updateError.message)
+        setPendingTemplateActionId(null)
+        return
+      }
+
+      setStatus('Template booking removed for this date.')
+    }
+
+    await Promise.all([
+      fetchPendingTemplateConfirmations(),
+      fetchPendingBookings(),
+      viewMode === 'schedule'
+        ? Promise.all([
+            supabase
+              .from('template_exceptions')
+              .select('id, template_id, exception_date')
+              .eq('exception_date', selectedDate)
+              .then(({ data }) => setTemplateExceptions(data ?? [])),
+            selectedDate === confirmation.occurrence_date
+              ? (() => {
+                  const dayStart = new Date(`${selectedDate}T00:00:00`)
+                  const dayEnd = new Date(dayStart)
+                  dayEnd.setDate(dayEnd.getDate() + 1)
+                  return supabase
+                    .from('bookings')
+                    .select(BOOKING_SELECT)
+                    .lt('start_time', dayEnd.toISOString())
+                    .gt('end_time', dayStart.toISOString())
+                    .order('start_time', { ascending: true })
+                    .then(({ data }) => setBookings(data ?? []))
+                })()
+              : Promise.resolve(),
+          ])
+        : Promise.resolve(),
+    ])
+
+    setPendingTemplateActionId(null)
+  }
+
   const handleSaveRiskAssessment = async () => {
     if (!riskAssessmentBooking || !currentMember) {
       return
@@ -2291,6 +2518,7 @@ function App() {
                 const next = !prev
                 if (next) {
                   fetchPendingBookings()
+                  fetchPendingTemplateConfirmations()
                 }
                 return next
               })
@@ -2358,7 +2586,7 @@ function App() {
                       setViewMode('pendingConfirmations')
                     }}
                   >
-                    Pending confirmations ({pendingBookings.length})
+                    Pending confirmations ({pendingBookings.length + pendingTemplateConfirmations.length})
                   </button>
                 ) : null}
                 {isAdmin ? (
@@ -2624,11 +2852,13 @@ function App() {
                     {isPendingLoading ? (
                       <p className="empty-state">Loading pending confirmations...</p>
                     ) : pendingBookings.length === 0 ? (
-                      <p className="empty-state">
-                        {isAdmin
-                          ? 'No bookings are waiting for confirmation.'
-                          : 'All completed bookings have been confirmed.'}
-                      </p>
+                      pendingTemplateConfirmations.length === 0 ? (
+                        <p className="empty-state">
+                          {isAdmin
+                            ? 'No bookings are waiting for confirmation.'
+                            : 'All completed bookings have been confirmed.'}
+                        </p>
+                      ) : null
                     ) : isAdmin && selectedPendingBooking ? (
                       <div className="form-grid">
                         <button
@@ -2684,6 +2914,76 @@ function App() {
                       </div>
                     ) : (
                       <div className="form-grid pending-confirmations-list">
+                        {pendingTemplateConfirmations.length > 0 ? (
+                          <>
+                            <h3>Template bookings to confirm</h3>
+                            {pendingTemplateConfirmations.map((confirmation) => {
+                              const template = normalizeTemplateBooking(confirmation.booking_templates)
+                              const boatName =
+                                getRelatedName(template?.boats) ??
+                                template?.boat_label ??
+                                'Boat'
+                              const boatType = getRelatedType(template?.boats)
+                              const memberName =
+                                getRelatedName(confirmation.members) ??
+                                getRelatedName(template?.members) ??
+                                'Member'
+                              const busy = pendingTemplateActionId === confirmation.id
+                              return (
+                                <div
+                                  key={confirmation.id}
+                                  className="template-summary pending-confirmation-card"
+                                >
+                                  <div className="template-info">
+                                    <strong>
+                                      {boatType ? `${boatType} ` : ''}
+                                      {boatName}
+                                    </strong>
+                                    <span>{formatDayLabel(confirmation.occurrence_date)}</span>
+                                    <span>
+                                      {template
+                                        ? `${normalizeTime(template.start_time)} - ${normalizeTime(template.end_time)}`
+                                        : 'Time unavailable'}
+                                    </span>
+                                    <span>
+                                      {isAdmin
+                                        ? `${memberName} must confirm if this template booking is still needed.`
+                                        : 'Confirm if this recurring outing is still needed.'}
+                                    </span>
+                                  </div>
+                                  <div className="modal-actions">
+                                    <button
+                                      className="button primary"
+                                      type="button"
+                                      onClick={() =>
+                                        handleResolveTemplateConfirmation(
+                                          confirmation,
+                                          'confirmed',
+                                        )
+                                      }
+                                      disabled={busy}
+                                    >
+                                      {busy ? 'Saving...' : 'Yes, keep it'}
+                                    </button>
+                                    <button
+                                      className="button ghost danger"
+                                      type="button"
+                                      onClick={() =>
+                                        handleResolveTemplateConfirmation(
+                                          confirmation,
+                                          'cancelled',
+                                        )
+                                      }
+                                      disabled={busy}
+                                    >
+                                      No, remove it
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </>
+                        ) : null}
                         {!isAdmin ? (
                           <p className="helper">
                             Confirm each completed booking before returning to the schedule.
