@@ -82,8 +82,8 @@ export default async function handler(req, res) {
   }
 
   const nowLondon = DateTime.now().setZone('Europe/London')
-  const windowStart = nowLondon.plus({ hours: 1 }).minus({ minutes: 2 })
-  const windowEnd = nowLondon.plus({ hours: 1 }).plus({ minutes: 2 })
+  const windowStart = nowLondon
+  const windowEnd = nowLondon.plus({ minutes: 30 })
 
   const { data: bookings, error } = await supabaseAdmin
     .from('bookings')
@@ -105,8 +105,33 @@ export default async function handler(req, res) {
     return
   }
 
+  const bookingIds = bookings.map((booking) => booking.id)
+  const { data: links, error: linksError } = await supabaseAdmin
+    .from('booking_risk_assessments')
+    .select('booking_id')
+    .in('booking_id', bookingIds)
+
+  if (linksError) {
+    res.status(500).json({ error: linksError.message })
+    return
+  }
+
+  const linkedBookingIds = new Set((links ?? []).map((link) => link.booking_id))
+  const bookingsMissingRiskAssessment = bookings.filter(
+    (booking) => !linkedBookingIds.has(booking.id),
+  )
+
+  if (bookingsMissingRiskAssessment.length === 0) {
+    if (req.method === 'HEAD') {
+      res.status(200).end()
+      return
+    }
+    res.status(200).json({ ok: true, sent: 0 })
+    return
+  }
+
   let sent = 0
-  for (const booking of bookings) {
+  for (const booking of bookingsMissingRiskAssessment) {
     if (!booking.member_id) {
       continue
     }
@@ -127,7 +152,7 @@ export default async function handler(req, res) {
 
     await sendToMember(booking.member_id, {
       title: 'Safety assessment reminder',
-      body: `${boatName} • ${dateLabel} • ${start}–${end} (London)`,
+      body: `${boatName} • ${dateLabel} • ${start}-${end}. No risk assessment is linked yet.`,
       url: '/',
     })
 
