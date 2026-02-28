@@ -512,6 +512,18 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [status])
 
+  useEffect(() => {
+    if (!error || !error.includes('Failed to fetch')) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setError((current) => (current === error ? null : current))
+    }, 4000)
+
+    return () => window.clearTimeout(timer)
+  }, [error])
+
   const skipBackdropClick = useRef(false)
 
   const fetchMembers = useCallback(async () => {
