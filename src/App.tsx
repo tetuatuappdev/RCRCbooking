@@ -985,12 +985,40 @@ function App() {
       return
     }
 
+    const pendingRows = data ?? []
+    if (pendingRows.length === 0) {
+      setPendingTemplateConfirmations([])
+      return
+    }
+
+    const occurrenceDates = Array.from(new Set(pendingRows.map((item) => item.occurrence_date)))
+    const { data: exceptions, error: exceptionsError } = await supabase
+      .from('template_exceptions')
+      .select('template_id, exception_date')
+      .in('exception_date', occurrenceDates)
+
+    if (exceptionsError) {
+      setError(exceptionsError.message)
+      return
+    }
+
+    const today = getTodayString()
+    const exceptionSet = new Set(
+      (exceptions ?? []).map((item) => `${item.template_id}:${item.exception_date}`),
+    )
+
     setPendingTemplateConfirmations(
-      (data ?? []).map((item) => ({
-        ...item,
-        booking_templates: normalizeTemplateBooking(item.booking_templates),
-        members: Array.isArray(item.members) ? item.members[0] ?? null : item.members ?? null,
-      })),
+      pendingRows
+        .filter(
+          (item) =>
+            item.occurrence_date >= today &&
+            !exceptionSet.has(`${item.template_id}:${item.occurrence_date}`),
+        )
+        .map((item) => ({
+          ...item,
+          booking_templates: normalizeTemplateBooking(item.booking_templates),
+          members: Array.isArray(item.members) ? item.members[0] ?? null : item.members ?? null,
+        })),
     )
   }, [currentMember, isAdmin, session])
 
@@ -2111,6 +2139,17 @@ function App() {
       return
     }
 
+    await supabase.from('template_confirmations').upsert(
+      {
+        template_id: editingTemplate.templateId,
+        member_id: editingTemplate.member_id,
+        occurrence_date: selectedDate,
+        status: 'cancelled',
+        responded_at: new Date().toISOString(),
+      },
+      { onConflict: 'template_id,occurrence_date' },
+    )
+
     const optimisticException = exceptionRow ?? {
       id: `local-${editingTemplate.templateId}-${selectedDate}`,
       template_id: editingTemplate.templateId,
@@ -2905,7 +2944,11 @@ function App() {
                   <div className="auth-form">
                     <div className="panel-header">
                       <h2>
-                        {isAdmin ? 'Pending confirmations' : 'Confirm completed bookings'}
+                        {isAdmin
+                          ? 'Pending confirmations'
+                          : pendingTemplateConfirmations.length > 0
+                            ? 'Pending confirmations'
+                            : 'Confirm completed bookings'}
                       </h2>
                     </div>
                     {isPendingLoading ? (
@@ -3045,7 +3088,9 @@ function App() {
                         ) : null}
                         {!isAdmin ? (
                           <p className="helper">
-                            Confirm each completed booking before returning to the schedule.
+                            {pendingTemplateConfirmations.length > 0
+                              ? 'Resolve each pending confirmation before returning to the schedule.'
+                              : 'Confirm each completed booking before returning to the schedule.'}
                           </p>
                         ) : null}
                         {pendingBookings.map((booking) => {
