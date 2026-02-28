@@ -537,13 +537,13 @@ function App() {
   }, [status])
 
   useEffect(() => {
-    if (!error || !error.includes('Failed to fetch')) {
+    if (!error) {
       return
     }
 
     const timer = window.setTimeout(() => {
       setError((current) => (current === error ? null : current))
-    }, 4000)
+    }, 5000)
 
     return () => window.clearTimeout(timer)
   }, [error])
@@ -2227,7 +2227,8 @@ function App() {
     if (raceEventConflictBoatIds.length > 0) {
       const conflictNames = raceEventConflictBoatIds
         .map((boatId) => boats.find((boat) => boat.id === boatId)?.name ?? 'Boat')
-      setError(`Race event conflict for: ${conflictNames.join(', ')}.`)
+      setError(null)
+      window.alert(`Race event conflict for: ${conflictNames.join(', ')}.`)
       return
     }
 
