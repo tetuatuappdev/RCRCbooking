@@ -2569,6 +2569,7 @@ function App() {
     }
 
     let riskAssessmentId = editingRiskAssessment?.id ?? null
+    const isNewRiskAssessment = !editingRiskAssessment
 
     if (editingRiskAssessment) {
       const { error } = await supabase
@@ -2611,6 +2612,23 @@ function App() {
     if (linkError) {
       setError(linkError.message)
       return
+    }
+
+    if (isNewRiskAssessment) {
+      const accessToken = await getAccessToken()
+      if (accessToken) {
+        await fetch('/api/push/notify-risk-assessment-admins', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            riskAssessmentId,
+            bookingId: riskAssessmentBooking.id,
+          }),
+        }).catch(() => undefined)
+      }
     }
 
     setStatus(editingRiskAssessment ? 'Risk assessment updated.' : 'Risk assessment created.')
@@ -3795,6 +3813,7 @@ function App() {
       viewMode !== 'boats' &&
       viewMode !== 'access' &&
       viewMode !== 'profile' &&
+      viewMode !== 'riskAssessments' &&
       viewMode !== 'pendingConfirmations' &&
       (viewMode !== 'schedule' || !isSelectedDateInPast)
         ? createPortal(
