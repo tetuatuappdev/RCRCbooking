@@ -994,6 +994,28 @@ function App() {
     )
   }, [currentMember, isAdmin, session])
 
+  const refreshScheduleDay = useCallback(async (date: string) => {
+    const dayStart = new Date(`${date}T00:00:00`)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+
+    const [{ data: bookingsData }, { data: exceptionsData }] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select(BOOKING_SELECT)
+        .lt('start_time', dayEnd.toISOString())
+        .gt('end_time', dayStart.toISOString())
+        .order('start_time', { ascending: true }),
+      supabase
+        .from('template_exceptions')
+        .select('id, template_id, exception_date')
+        .eq('exception_date', date),
+    ])
+
+    setBookings(bookingsData ?? [])
+    setTemplateExceptions(exceptionsData ?? [])
+  }, [])
+
   const filteredBoats = useMemo(() => {
     if (!boatTypeFilter) {
       return boats
@@ -2142,6 +2164,123 @@ function App() {
     setPendingActionId(null)
   }
 
+  const resolveTemplateOccurrence = useCallback(
+    async ({
+      confirmationId,
+      template,
+      templateId,
+      memberId,
+      occurrenceDate,
+      nextStatus,
+    }: {
+      confirmationId?: string | null
+      template: TemplateBooking
+      templateId: string
+      memberId: string
+      occurrenceDate: string
+      nextStatus: 'confirmed' | 'cancelled'
+    }) => {
+      const exceptionPayload = {
+        template_id: templateId,
+        exception_date: occurrenceDate,
+      }
+
+      let insertedBookingId: string | null = null
+
+      if (nextStatus === 'confirmed') {
+        if (!template.boat_id) {
+          throw new Error('This template has no boat assigned. Add a boat before confirming it.')
+        }
+
+        const startTime = normalizeTime(template.start_time)
+        const endTime = normalizeTime(template.end_time)
+        const bookingStart = new Date(`${occurrenceDate}T${startTime}:00`)
+        const bookingEnd = new Date(`${occurrenceDate}T${endTime}:00`)
+
+        const { data: conflicts, error: conflictError } = await supabase
+          .from('bookings')
+          .select('id')
+          .eq('boat_id', template.boat_id)
+          .lt('start_time', bookingEnd.toISOString())
+          .gt('end_time', bookingStart.toISOString())
+
+        if (conflictError) {
+          throw new Error(conflictError.message)
+        }
+
+        if (conflicts && conflicts.length > 0) {
+          throw new Error('A booking already exists for this boat during that time.')
+        }
+
+        const { data: insertedBooking, error: insertBookingError } = await supabase
+          .from('bookings')
+          .insert({
+            boat_id: template.boat_id,
+            member_id: memberId,
+            start_time: bookingStart.toISOString(),
+            end_time: bookingEnd.toISOString(),
+          })
+          .select('id')
+          .single()
+
+        if (insertBookingError) {
+          throw new Error(insertBookingError.message)
+        }
+
+        insertedBookingId = insertedBooking.id
+      }
+
+      const { error: exceptionError } = await supabase
+        .from('template_exceptions')
+        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+
+      if (exceptionError) {
+        throw new Error(exceptionError.message)
+      }
+
+      const respondedAt = new Date().toISOString()
+      const { error: updateError } = confirmationId
+        ? await supabase
+            .from('template_confirmations')
+            .update({
+              status: nextStatus,
+              booking_id: insertedBookingId,
+              responded_at: respondedAt,
+            })
+            .eq('id', confirmationId)
+        : await supabase.from('template_confirmations').upsert(
+            {
+              template_id: templateId,
+              member_id: memberId,
+              occurrence_date: occurrenceDate,
+              status: nextStatus,
+              booking_id: insertedBookingId,
+              responded_at: respondedAt,
+            },
+            { onConflict: 'template_id,occurrence_date' },
+          )
+
+      if (updateError) {
+        throw new Error(updateError.message)
+      }
+
+      await Promise.all([
+        fetchPendingTemplateConfirmations(),
+        fetchPendingBookings(),
+        viewMode === 'schedule' && selectedDate === occurrenceDate
+          ? refreshScheduleDay(occurrenceDate)
+          : Promise.resolve(),
+      ])
+    },
+    [
+      fetchPendingBookings,
+      fetchPendingTemplateConfirmations,
+      refreshScheduleDay,
+      selectedDate,
+      viewMode,
+    ],
+  )
+
   const handleResolveTemplateConfirmation = async (
     confirmation: TemplateConfirmation,
     nextStatus: 'confirmed' | 'cancelled',
@@ -2166,142 +2305,62 @@ function App() {
       return
     }
 
-    const exceptionPayload = {
-      template_id: confirmation.template_id,
-      exception_date: confirmation.occurrence_date,
+    try {
+      await resolveTemplateOccurrence({
+        confirmationId: confirmation.id,
+        template,
+        templateId: confirmation.template_id,
+        memberId: confirmation.member_id,
+        occurrenceDate: confirmation.occurrence_date,
+        nextStatus,
+      })
+      setStatus(
+        nextStatus === 'confirmed'
+          ? 'Template converted to a booking.'
+          : 'Template booking removed for this date.',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to resolve template booking.')
+    } finally {
+      setPendingTemplateActionId(null)
+    }
+  }
+
+  const handleConfirmTemplateBooking = async () => {
+    if (!currentMember || !editingTemplate?.templateId || !editingTemplate.member_id) {
+      return
     }
 
-    if (nextStatus === 'confirmed') {
-      if (!template.boat_id) {
-        setError('This template has no boat assigned. Add a boat before confirming it.')
-        setPendingTemplateActionId(null)
-        return
-      }
+    if (!canEditTemplate(editingTemplate)) {
+      setError('You can only confirm your own template bookings.')
+      return
+    }
 
-      const startTime = normalizeTime(template.start_time)
-      const endTime = normalizeTime(template.end_time)
-      const bookingStart = new Date(`${confirmation.occurrence_date}T${startTime}:00`)
-      const bookingEnd = new Date(`${confirmation.occurrence_date}T${endTime}:00`)
+    const template = templateBookings.find((item) => item.id === editingTemplate.templateId)
+    if (!template) {
+      setError('Template booking not found.')
+      return
+    }
 
-      const { data: conflicts, error: conflictError } = await supabase
-        .from('bookings')
-        .select('id')
-        .eq('boat_id', template.boat_id)
-        .lt('start_time', bookingEnd.toISOString())
-        .gt('end_time', bookingStart.toISOString())
+    setPendingTemplateActionId(editingTemplate.templateId)
+    setError(null)
+    setStatus(null)
 
-      if (conflictError) {
-        setError(conflictError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      if (conflicts && conflicts.length > 0) {
-        setError('A booking already exists for this boat during that time.')
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      const { data: insertedBooking, error: insertBookingError } = await supabase
-        .from('bookings')
-        .insert({
-          boat_id: template.boat_id,
-          member_id: confirmation.member_id,
-          start_time: bookingStart.toISOString(),
-          end_time: bookingEnd.toISOString(),
-        })
-        .select('id')
-        .single()
-
-      if (insertBookingError) {
-        setError(insertBookingError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      const { error: exceptionError } = await supabase
-        .from('template_exceptions')
-        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
-
-      if (exceptionError) {
-        setError(exceptionError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      const { error: updateError } = await supabase
-        .from('template_confirmations')
-        .update({
-          status: nextStatus,
-          booking_id: insertedBooking.id,
-          responded_at: new Date().toISOString(),
-        })
-        .eq('id', confirmation.id)
-
-      if (updateError) {
-        setError(updateError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
+    try {
+      await resolveTemplateOccurrence({
+        template,
+        templateId: editingTemplate.templateId,
+        memberId: editingTemplate.member_id,
+        occurrenceDate: selectedDate,
+        nextStatus: 'confirmed',
+      })
+      setEditingTemplate(null)
       setStatus('Template converted to a booking.')
-    } else {
-      const { error: exceptionError } = await supabase
-        .from('template_exceptions')
-        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
-
-      if (exceptionError) {
-        setError(exceptionError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      const { error: updateError } = await supabase
-        .from('template_confirmations')
-        .update({
-          status: nextStatus,
-          responded_at: new Date().toISOString(),
-        })
-        .eq('id', confirmation.id)
-
-      if (updateError) {
-        setError(updateError.message)
-        setPendingTemplateActionId(null)
-        return
-      }
-
-      setStatus('Template booking removed for this date.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to confirm template booking.')
+    } finally {
+      setPendingTemplateActionId(null)
     }
-
-    await Promise.all([
-      fetchPendingTemplateConfirmations(),
-      fetchPendingBookings(),
-      viewMode === 'schedule'
-        ? Promise.all([
-            supabase
-              .from('template_exceptions')
-              .select('id, template_id, exception_date')
-              .eq('exception_date', selectedDate)
-              .then(({ data }) => setTemplateExceptions(data ?? [])),
-            selectedDate === confirmation.occurrence_date
-              ? (() => {
-                  const dayStart = new Date(`${selectedDate}T00:00:00`)
-                  const dayEnd = new Date(dayStart)
-                  dayEnd.setDate(dayEnd.getDate() + 1)
-                  return supabase
-                    .from('bookings')
-                    .select(BOOKING_SELECT)
-                    .lt('start_time', dayEnd.toISOString())
-                    .gt('end_time', dayStart.toISOString())
-                    .order('start_time', { ascending: true })
-                    .then(({ data }) => setBookings(data ?? []))
-                })()
-              : Promise.resolve(),
-          ])
-        : Promise.resolve(),
-    ])
-
-    setPendingTemplateActionId(null)
   }
 
   const handleSaveRiskAssessment = async () => {
@@ -3616,6 +3675,15 @@ function App() {
                     {formatTime(editingTemplate.end_time)}
                   </span>
                 </div>
+                <button
+                  className="button primary"
+                  onClick={handleConfirmTemplateBooking}
+                  disabled={pendingTemplateActionId === editingTemplate.templateId}
+                >
+                  {pendingTemplateActionId === editingTemplate.templateId
+                    ? 'Confirming...'
+                    : 'Confirm the booking'}
+                </button>
                 <button className="button ghost danger" onClick={handleDeleteTemplate}>
                   Skip for this date
                 </button>
