@@ -124,6 +124,20 @@ type BoatPermission = {
   member_id: string
 }
 
+type RaceEventBoatLink = {
+  id: string
+  boat_id: string
+  boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+}
+
+type RaceEvent = {
+  id: string
+  title: string
+  event_date: string
+  created_by: string | null
+  race_event_boats?: RaceEventBoatLink[] | null
+}
+
 type UserRole = 'admin' | 'coordinator' | 'guest'
 
 type BookingRiskAssessmentLink = {
@@ -345,6 +359,7 @@ function App() {
   const [allowedMembers, setAllowedMembers] = useState<
     { id: string; email: string; name: string; role?: UserRole | null; is_admin: boolean }[]
   >([])
+  const [raceEvents, setRaceEvents] = useState<RaceEvent[]>([])
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [pendingBookings, setPendingBookings] = useState<Booking[]>([])
@@ -376,6 +391,7 @@ function App() {
     | 'boats'
     | 'access'
     | 'profile'
+    | 'raceEvents'
     | 'pendingConfirmations'
     | 'riskAssessments'
   >('schedule')
@@ -390,6 +406,9 @@ function App() {
   const [endTime, setEndTime] = useState('08:00')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
+  const [editingRaceEvent, setEditingRaceEvent] = useState<RaceEvent | null>(null)
+  const [showRaceEventEditor, setShowRaceEventEditor] = useState(false)
+  const [raceEventReadOnly, setRaceEventReadOnly] = useState(false)
   const [riskAssessmentBooking, setRiskAssessmentBooking] = useState<Booking | null>(null)
   const [editingRiskAssessment, setEditingRiskAssessment] = useState<RiskAssessment | null>(null)
   const [linkedRiskAssessment, setLinkedRiskAssessment] = useState<RiskAssessment | null>(null)
@@ -406,6 +425,11 @@ function App() {
     usage_type: '',
     in_service: '',
     notes: '',
+  })
+  const [raceEventForm, setRaceEventForm] = useState({
+    title: '',
+    event_date: getTodayString(),
+    boatIds: [] as string[],
   })
   const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
@@ -861,6 +885,60 @@ function App() {
     )
   }, [currentMember, isAdmin, session])
 
+  const fetchRaceEvents = useCallback(async () => {
+    if (!session) {
+      setRaceEvents([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('race_events')
+      .select(
+        'id, title, event_date, created_by, race_event_boats(id, boat_id, boats(name,type))',
+      )
+      .order('event_date', { ascending: true })
+      .order('title', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setRaceEvents(
+      (data ?? []).map((event) => ({
+        ...event,
+        race_event_boats: (event.race_event_boats ?? []).map((link) => ({
+          ...link,
+          boats: Array.isArray(link.boats) ? link.boats[0] ?? null : link.boats ?? null,
+        })),
+      })),
+    )
+  }, [session])
+
+  const resetRaceEventForm = () => {
+    setShowRaceEventEditor(false)
+    setEditingRaceEvent(null)
+    setRaceEventReadOnly(false)
+    setRaceEventForm({
+      title: '',
+      event_date: getTodayString(),
+      boatIds: [],
+    })
+  }
+
+  const openRaceEventEditor = (event?: RaceEvent, options?: { readOnly?: boolean }) => {
+    setError(null)
+    setStatus(null)
+    setShowRaceEventEditor(true)
+    setEditingRaceEvent(event ?? null)
+    setRaceEventReadOnly(Boolean(options?.readOnly))
+    setRaceEventForm({
+      title: event?.title ?? '',
+      event_date: event?.event_date ?? getTodayString(),
+      boatIds: (event?.race_event_boats ?? []).map((link) => link.boat_id),
+    })
+  }
+
   const resetRiskAssessmentForm = () => {
     setRiskAssessmentForm({
       coordinator_name: '',
@@ -1239,6 +1317,12 @@ function App() {
       fetchRiskAssessments()
     }
   }, [fetchRiskAssessments, session, viewMode])
+
+  useEffect(() => {
+    if (viewMode === 'raceEvents' && session) {
+      fetchRaceEvents()
+    }
+  }, [fetchRaceEvents, session, viewMode])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -2674,6 +2758,95 @@ function App() {
     resetRiskAssessmentForm()
   }
 
+  const handleSaveRaceEvent = async () => {
+    if (!isAdmin) {
+      setError('Only admins can manage race events.')
+      return
+    }
+
+    const title = raceEventForm.title.trim()
+    const eventDate = raceEventForm.event_date
+    const boatIds = Array.from(new Set(raceEventForm.boatIds))
+
+    setError(null)
+    setStatus(null)
+
+    if (!title || !eventDate) {
+      setError('Enter an event title and date.')
+      return
+    }
+
+    if (boatIds.length === 0) {
+      setError('Select at least one boat.')
+      return
+    }
+
+    let raceEventId = editingRaceEvent?.id ?? null
+
+    if (editingRaceEvent) {
+      const { error } = await supabase
+        .from('race_events')
+        .update({
+          title,
+          event_date: eventDate,
+        })
+        .eq('id', editingRaceEvent.id)
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('race_events')
+        .insert({
+          title,
+          event_date: eventDate,
+          created_by: currentMember?.id ?? null,
+        })
+        .select('id')
+        .single()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      raceEventId = data.id
+    }
+
+    if (!raceEventId) {
+      setError('Unable to save race event.')
+      return
+    }
+
+    const { error: deleteLinksError } = await supabase
+      .from('race_event_boats')
+      .delete()
+      .eq('race_event_id', raceEventId)
+
+    if (deleteLinksError) {
+      setError(deleteLinksError.message)
+      return
+    }
+
+    const { error: insertLinksError } = await supabase.from('race_event_boats').insert(
+      boatIds.map((boatId) => ({
+        race_event_id: raceEventId,
+        boat_id: boatId,
+      })),
+    )
+
+    if (insertLinksError) {
+      setError(insertLinksError.message)
+      return
+    }
+
+    setStatus(editingRaceEvent ? 'Race event updated.' : 'Race event created.')
+    await fetchRaceEvents()
+    resetRaceEventForm()
+  }
+
   const handleSaveAccess = async () => {
     setError(null)
     setStatus(null)
@@ -2847,6 +3020,20 @@ function App() {
                   }}
                 >
                   River and weather conditions
+                </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setEditingBoat(null)
+                    setViewMode('raceEvents')
+                  }}
+                >
+                  Race events
                 </button>
                 {isAdmin ? (
                   <button
@@ -3374,6 +3561,40 @@ function App() {
                   </tbody>
                 </table>
               </div>
+            ) : viewMode === 'raceEvents' ? (
+              <div className="access-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Title</th>
+                      <th>Boats</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {raceEvents.map((event) => {
+                      const boatLabels = (event.race_event_boats ?? []).map((link) => {
+                        const boat = Array.isArray(link.boats) ? link.boats[0] ?? null : link.boats ?? null
+                        if (!boat) {
+                          return 'Boat'
+                        }
+                        return boat.type ? `${boat.type} ${boat.name}` : boat.name
+                      })
+
+                      return (
+                        <tr
+                          key={event.id}
+                          onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
+                        >
+                          <td>{event.event_date}</td>
+                          <td>{event.title}</td>
+                          <td>{boatLabels.join(', ')}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : viewMode === 'profile' ? (
               <div className="page-pad">
                 <section className="panel login-panel auth-card single">
@@ -3825,6 +4046,7 @@ function App() {
       viewMode !== 'boats' &&
       viewMode !== 'access' &&
       viewMode !== 'profile' &&
+      viewMode !== 'raceEvents' &&
       viewMode !== 'riskAssessments' &&
       viewMode !== 'pendingConfirmations' &&
       (viewMode !== 'schedule' || !isSelectedDateInPast)
@@ -4449,6 +4671,107 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {session && showRaceEventEditor ? (
+        <div className="modal-backdrop" onClick={resetRaceEventForm}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>
+                {raceEventReadOnly
+                  ? 'View race event'
+                  : editingRaceEvent
+                    ? 'Edit race event'
+                    : 'Create race event'}
+              </h3>
+              <button className="button ghost" type="button" onClick={resetRaceEventForm}>
+                Close
+              </button>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span>Title</span>
+                <input
+                  value={raceEventForm.title}
+                  readOnly={raceEventReadOnly}
+                  onChange={(event) =>
+                    setRaceEventForm((prev) => ({ ...prev, title: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Date</span>
+                <input
+                  type="date"
+                  value={raceEventForm.event_date}
+                  readOnly={raceEventReadOnly}
+                  onChange={(event) =>
+                    setRaceEventForm((prev) => ({ ...prev, event_date: event.target.value }))
+                  }
+                />
+              </label>
+              <div className="field">
+                <span>Boats</span>
+                <div className="boat-list">
+                  {boats.map((boat) => {
+                    const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
+                    const checked = raceEventForm.boatIds.includes(boat.id)
+                    return (
+                      <label key={boat.id} className="boat-option">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={raceEventReadOnly}
+                          onChange={(event) => {
+                            const next = event.target.checked
+                            setRaceEventForm((prev) => ({
+                              ...prev,
+                              boatIds: next
+                                ? [...prev.boatIds, boat.id]
+                                : prev.boatIds.filter((id) => id !== boat.id),
+                            }))
+                          }}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+            {!raceEventReadOnly ? (
+              <div className="modal-actions">
+                <button className="button primary" type="button" onClick={handleSaveRaceEvent}>
+                  Save
+                </button>
+                <button className="button ghost" type="button" onClick={resetRaceEventForm}>
+                  Cancel
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {session &&
+      !showNewBooking &&
+      !editingBooking &&
+      !editingTemplate &&
+      !editingBoat &&
+      !showRaceEventEditor &&
+      viewMode === 'raceEvents' &&
+      isAdmin
+        ? createPortal(
+            <button
+              className="fab"
+              onClick={() => openRaceEventEditor(undefined, { readOnly: false })}
+              aria-label="New race event"
+              type="button"
+            >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
 
       {session && editingBoat ? (
         <div className="modal-backdrop" onClick={() => setEditingBoat(null)}>

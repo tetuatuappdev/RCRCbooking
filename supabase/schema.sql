@@ -20,6 +20,22 @@ create table if not exists boats (
   created_at timestamptz not null default now()
 );
 
+create table if not exists race_events (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  event_date date not null,
+  created_by uuid references members(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists race_event_boats (
+  id uuid primary key default gen_random_uuid(),
+  race_event_id uuid not null references race_events(id) on delete cascade,
+  boat_id uuid not null references boats(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (race_event_id, boat_id)
+);
+
 create table if not exists bookings (
   id uuid primary key default gen_random_uuid(),
   boat_id uuid not null references boats(id) on delete cascade,
@@ -175,6 +191,8 @@ alter table booking_risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
 alter table template_confirmations enable row level security;
 alter table boat_permissions enable row level security;
+alter table race_events enable row level security;
+alter table race_event_boats enable row level security;
 
 create policy "Members readable for login" on members
   for select to anon, authenticated
@@ -202,6 +220,80 @@ create policy "Members delete for authed" on members
 create policy "Boats readable for authed" on boats
   for select to authenticated
   using (true);
+
+create policy "Race events readable for authed" on race_events
+  for select to authenticated
+  using (true);
+
+create policy "Race event boats readable for authed" on race_event_boats
+  for select to authenticated
+  using (true);
+
+create policy "Race events insert for admins" on race_events
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race events update for admins" on race_events
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race events delete for admins" on race_events
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race event boats insert for admins" on race_event_boats
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race event boats update for admins" on race_event_boats
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race event boats delete for admins" on race_event_boats
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
 
 create policy "Bookings readable for authed" on bookings
   for select to authenticated
