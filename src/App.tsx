@@ -3844,9 +3844,6 @@ function App() {
             ) : viewMode === 'templates' ? (
               <>
                 <div className="form-grid">
-                  {editingBooking ? (
-                    <p className="helper">{getBookingUsageLabel(editingBooking)}</p>
-                  ) : null}
                   {isAdmin ? (
                     <label className="field">
                       <span>Member</span>
@@ -3912,6 +3909,9 @@ function App() {
             ) : (
               <>
                 <div className="form-grid">
+                  {editingBooking ? (
+                    <p className="helper">{getBookingUsageLabel(editingBooking)}</p>
+                  ) : null}
                   {isAdmin ? (
                     <label className="field">
                       <span>Member</span>
