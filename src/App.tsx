@@ -2346,20 +2346,6 @@ function App() {
                 >
                   River and weather conditions
                 </button>
-                <button
-                  className="menu-item"
-                  type="button"
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.open(
-                      'https://forms.office.com/pages/responsepage.aspx?id=-IfL4Xjbd0-GJ9xSeeWF3QcM_q2QJTNIkImQlQ8ffo1UOUg4VFRLM0xMNU9YQ0xZQTdZMUdGOUk2SC4u&route=shorturl',
-                      '_blank',
-                      'noopener,noreferrer',
-                    )
-                  }}
-                >
-                  Outing Risk Assessment
-                </button>
                 {isAdmin ? (
                   <button
                     className="menu-item"
