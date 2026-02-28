@@ -249,6 +249,28 @@ const toDateInputValue = (value: string) => {
   return `${year}-${month}-${day}`
 }
 
+const canOpenRiskAssessment = (booking: Booking) => {
+  const bookingStart = new Date(booking.start_time).getTime()
+  if (Number.isNaN(bookingStart)) {
+    return false
+  }
+  return Date.now() >= bookingStart - 60 * 60 * 1000
+}
+
+const getRiskAssessmentAvailabilityMessage = (booking: Booking) => {
+  const bookingStart = new Date(booking.start_time)
+  if (Number.isNaN(bookingStart.getTime())) {
+    return 'Risk assessment is not available for this booking yet.'
+  }
+  const availableAt = new Date(bookingStart.getTime() - 60 * 60 * 1000)
+  return `Risk assessment becomes available 1 hour before the outing starts, at ${availableAt.toLocaleString([], {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}.`
+}
+
 const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
   if (!value) {
     return null
@@ -813,6 +835,12 @@ function App() {
   const openRiskAssessmentEditor = async (booking: Booking) => {
     setError(null)
     setStatus(null)
+
+    if (!canOpenRiskAssessment(booking)) {
+      setError(getRiskAssessmentAvailabilityMessage(booking))
+      return
+    }
+
     setRiskAssessmentBooking(booking)
     setEditingRiskAssessment(null)
     setLinkedRiskAssessment(null)
@@ -2410,6 +2438,11 @@ function App() {
     setError(null)
     setStatus(null)
 
+    if (!canOpenRiskAssessment(riskAssessmentBooking)) {
+      setError(getRiskAssessmentAvailabilityMessage(riskAssessmentBooking))
+      return
+    }
+
     const requiredValues = Object.values(riskAssessmentForm).map((value) => value.trim())
     if (requiredValues.some((value) => !value)) {
       setError('Complete all risk assessment fields.')
@@ -3931,6 +3964,12 @@ function App() {
                       className="button ghost"
                       type="button"
                       onClick={() => openRiskAssessmentEditor(editingBooking)}
+                      disabled={!canOpenRiskAssessment(editingBooking)}
+                      title={
+                        canOpenRiskAssessment(editingBooking)
+                          ? undefined
+                          : getRiskAssessmentAvailabilityMessage(editingBooking)
+                      }
                     >
                       Create / Link Risk Assessment
                     </button>
