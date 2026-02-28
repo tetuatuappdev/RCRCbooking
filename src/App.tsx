@@ -403,7 +403,7 @@ function App() {
   const [bookingBoatIds, setBookingBoatIds] = useState<string[]>([])
   const [boatSearch, setBoatSearch] = useState('')
   const [startTime, setStartTime] = useState('07:30')
-  const [endTime, setEndTime] = useState('08:00')
+  const [endTime, setEndTime] = useState('08:30')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
   const [editingRaceEvent, setEditingRaceEvent] = useState<RaceEvent | null>(null)
