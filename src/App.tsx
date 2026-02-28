@@ -282,6 +282,9 @@ const isPastBooking = (booking: { start_time: string }) => {
 const isPendingBooking = (booking: { usage_status?: Booking['usage_status'] }) =>
   booking.usage_status === 'pending'
 
+const isSettledBooking = (booking: { usage_status?: Booking['usage_status'] }) =>
+  booking.usage_status === 'confirmed' || booking.usage_status === 'cancelled'
+
 const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) => {
   if (!value) {
     return null
@@ -3478,6 +3481,8 @@ function App() {
                             !booking.isTemplate && isPastBooking(booking as Booking)
                           const isPendingRenderedBooking =
                             !booking.isTemplate && isPendingBooking(booking as Booking)
+                          const isSettledRenderedBooking =
+                            !booking.isTemplate && isSettledBooking(booking as Booking)
                           const handleBookingClick = () => {
                             if (!canOpenBooking) {
                               return
@@ -3520,7 +3525,9 @@ function App() {
                               className={`booking-pill gantt-pill${
                                 booking.isTemplate ? ' template' : ''
                               }${
-                                isPastRenderedBooking && !isPendingRenderedBooking
+                                (isSettledRenderedBooking ||
+                                  (isPastRenderedBooking && !isPendingRenderedBooking)) &&
+                                !isPendingRenderedBooking
                                   ? ' booking-pill--past'
                                   : ''
                               }${
@@ -4014,34 +4021,32 @@ function App() {
                       onChange={(event) => setEndTime(event.target.value)}
                     />
                   </label>
-                  <button className="button primary" onClick={handleSaveBooking} disabled={isEditingBookingLocked}>
-                    {editingBooking ? 'Save changes' : 'Validate booking'}
-                  </button>
-                  {editingBooking ? (
-                    <button
-                      className="button ghost"
-                      type="button"
-                      onClick={() => openRiskAssessmentEditor(editingBooking)}
-                      disabled={isEditingBookingLocked || !canOpenRiskAssessment(editingBooking)}
-                      title={
-                        isEditingBookingLocked
-                          ? 'Past bookings and bookings waiting for confirmation are read-only.'
-                          : canOpenRiskAssessment(editingBooking)
-                          ? undefined
-                          : getRiskAssessmentAvailabilityMessage(editingBooking)
-                      }
-                    >
-                      Create / Link Risk Assessment
-                    </button>
-                  ) : null}
-                  {editingBooking ? (
-                    <button
-                      className="button ghost danger"
-                      onClick={handleDeleteBooking}
-                      disabled={isEditingBookingLocked}
-                    >
-                      Delete booking
-                    </button>
+                  {!isEditingBookingLocked ? (
+                    <>
+                      <button className="button primary" onClick={handleSaveBooking}>
+                        {editingBooking ? 'Save changes' : 'Validate booking'}
+                      </button>
+                      {editingBooking ? (
+                        <button
+                          className="button ghost"
+                          type="button"
+                          onClick={() => openRiskAssessmentEditor(editingBooking)}
+                          disabled={!canOpenRiskAssessment(editingBooking)}
+                          title={
+                            canOpenRiskAssessment(editingBooking)
+                              ? undefined
+                              : getRiskAssessmentAvailabilityMessage(editingBooking)
+                          }
+                        >
+                          Create / Link Risk Assessment
+                        </button>
+                      ) : null}
+                      {editingBooking ? (
+                        <button className="button ghost danger" onClick={handleDeleteBooking}>
+                          Delete booking
+                        </button>
+                      ) : null}
+                    </>
                   ) : null}
                 </div>
                 {isEditingBookingLocked ? (
