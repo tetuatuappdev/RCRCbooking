@@ -391,6 +391,7 @@ function App() {
     | 'boats'
     | 'access'
     | 'profile'
+    | 'readme'
     | 'raceEvents'
     | 'pendingConfirmations'
     | 'riskAssessments'
@@ -3102,6 +3103,20 @@ function App() {
                 >
                   Race events
                 </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setEditingBoat(null)
+                    setViewMode('readme')
+                  }}
+                >
+                  README
+                </button>
                 {isAdmin ? (
                   <button
                     className="menu-item"
@@ -3661,6 +3676,124 @@ function App() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            ) : viewMode === 'readme' ? (
+              <div className="page-pad">
+                <section className="panel login-panel auth-card single">
+                  <div className="auth-form">
+                    <div className="panel-header">
+                      <h2>README</h2>
+                    </div>
+
+                    <div className="form-grid">
+                      <div className="field">
+                        <span>Purpose</span>
+                        <p className="helper">
+                          This app manages boat bookings, recurring template bookings, race-day
+                          availability, risk assessments, and post-outing confirmation of actual
+                          boat usage.
+                        </p>
+                      </div>
+
+                      <div className="field">
+                        <span>Shared logic</span>
+                        <p className="helper">
+                          Boats assigned to a race event cannot be booked on the event date.
+                          Recurring template bookings must be confirmed in advance or they are
+                          skipped automatically. A completed outing must then be confirmed as
+                          happened or did not happen.
+                        </p>
+                      </div>
+
+                      {isAdmin ? (
+                        <>
+                          <div className="field">
+                            <span>Admin responsibilities</span>
+                            <p className="helper">
+                              Admins manage boats, booking templates, user access, race events,
+                              risk assessment review, and can see all pending confirmations without
+                              being blocked by them.
+                            </p>
+                          </div>
+                          <div className="field">
+                            <span>Admin business rules</span>
+                            <p className="helper">
+                              You can create admins, coordinators, and guests. You can edit template
+                              bookings, convert template occurrences into real bookings, review risk
+                              assessments in read-only mode, and create race events that reserve
+                              boats away from the club.
+                            </p>
+                          </div>
+                          <div className="field">
+                            <span>Notifications for admins</span>
+                            <p className="helper">
+                              Admins receive push notifications when a new risk assessment is
+                              created. Coordinateur bookings that conflict with a race event also
+                              trigger coordinator notifications when the event is saved.
+                            </p>
+                          </div>
+                        </>
+                      ) : isCoordinator ? (
+                        <>
+                          <div className="field">
+                            <span>Coordinator responsibilities</span>
+                            <p className="helper">
+                              Coordinators can book boats, confirm recurring template outings, fill
+                              risk assessments close to the booking start time, confirm whether a
+                              completed outing really happened, and manage guest access.
+                            </p>
+                          </div>
+                          <div className="field">
+                            <span>Coordinator business rules</span>
+                            <p className="helper">
+                              Guests can only be created by coordinators. Risk assessments are
+                              available from one hour before the outing start. If you have pending
+                              confirmations, the app blocks normal navigation until they are
+                              resolved.
+                            </p>
+                          </div>
+                          <div className="field">
+                            <span>Recurring bookings and races</span>
+                            <p className="helper">
+                              Template bookings are requested three days ahead. If you do not
+                              confirm them, they are removed automatically. If a boat is moved into
+                              a race event after your booking exists, you receive a notification
+                              because the booking now conflicts.
+                            </p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="field">
+                            <span>Guest access</span>
+                            <p className="helper">
+                              Guests have read-only access. You can consult the daily schedule,
+                              boats, race events, and your profile, but you cannot create, edit, or
+                              delete bookings, templates, or access rules.
+                            </p>
+                          </div>
+                          <div className="field">
+                            <span>What you can view</span>
+                            <p className="helper">
+                              You can use the app to understand boat availability, see race events,
+                              and consult bookings that have already been made by coordinators or
+                              admins.
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="field">
+                        <span>Statuses used in the app</span>
+                        <p className="helper">
+                          Scheduled means the outing is planned. Pending means user action is still
+                          required. Confirmed means the outing happened. Cancelled means it did not
+                          happen or was removed from the schedule.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
               </div>
             ) : viewMode === 'profile' ? (
               <div className="page-pad">
