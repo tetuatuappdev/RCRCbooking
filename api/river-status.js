@@ -147,10 +147,41 @@ export default async function handler(req, res) {
     }
 
     const html = await response.text()
+    const escaped = decodeEscapedMarkup(html)
     const parsed = parseRiverStatus(html)
+    const debugRequested =
+      req.query?.debug === '1' ||
+      (Array.isArray(req.query?.debug) && req.query.debug.includes('1'))
 
     if (req.method === 'HEAD') {
       res.status(200).end()
+      return
+    }
+
+    if (debugRequested) {
+      const hasTextRowingStatus = /text-rowing-status/i.test(html)
+      const hasTextRowingStatusEscaped = /text-rowing-status/i.test(escaped)
+      const hasNoWarning = /no warnings?/i.test(html)
+      const hasNoWarningEscaped = /no warnings?/i.test(escaped)
+      const hasWarning = /\bwarning\b|\bwaning\b/i.test(html)
+      const hasWarningEscaped = /\bwarning\b|\bwaning\b/i.test(escaped)
+      res.status(200).json({
+        ok: true,
+        noWarning: parsed.noWarning,
+        statusMessage: parsed.statusMessage,
+        debug: {
+          fetchedStatus: response.status,
+          finalUrl: response.url,
+          htmlLength: html.length,
+          hasTextRowingStatus,
+          hasTextRowingStatusEscaped,
+          hasNoWarning,
+          hasNoWarningEscaped,
+          hasWarning,
+          hasWarningEscaped,
+          sample: html.slice(0, 500),
+        },
+      })
       return
     }
 
