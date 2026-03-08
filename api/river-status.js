@@ -134,6 +134,7 @@ const tryResolveStatusFromScripts = async (html, baseUrl) => {
   const scriptUrls = extractScriptUrls(html, baseUrl).slice(0, MAX_SCRIPT_SCAN)
   const triedScriptUrls = []
   const triedApiUrls = []
+  const apiProbeDetails = []
 
   for (const scriptUrl of scriptUrls) {
     triedScriptUrls.push(scriptUrl)
@@ -162,10 +163,16 @@ const tryResolveStatusFromScripts = async (html, baseUrl) => {
           redirect: 'follow',
           headers: { Accept: 'application/json,text/plain,*/*' },
         })
+        const payloadText = await apiResponse.text()
+        apiProbeDetails.push({
+          url: apiUrl,
+          status: apiResponse.status,
+          ok: apiResponse.ok,
+          sample: payloadText.slice(0, 220),
+        })
         if (!apiResponse.ok) {
           continue
         }
-        const payloadText = await apiResponse.text()
         const parsed = parseStatusFromApiPayload(payloadText)
         if (parsed) {
           return {
@@ -173,11 +180,18 @@ const tryResolveStatusFromScripts = async (html, baseUrl) => {
             debug: {
               scriptUrls: triedScriptUrls,
               apiUrls: triedApiUrls,
+              apiProbeDetails,
               resolvedFrom: apiUrl,
             },
           }
         }
       } catch {
+        apiProbeDetails.push({
+          url: apiUrl,
+          status: 'error',
+          ok: false,
+          sample: 'fetch failed',
+        })
         // ignore and continue probing
       }
     }
@@ -188,6 +202,7 @@ const tryResolveStatusFromScripts = async (html, baseUrl) => {
     debug: {
       scriptUrls: triedScriptUrls,
       apiUrls: triedApiUrls,
+      apiProbeDetails,
       resolvedFrom: null,
     },
   }
