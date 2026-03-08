@@ -1,4 +1,6 @@
 const RIVER_STATUS_URL = 'https://river.grosvenor-rowingclub.org.uk/'
+const MAX_SCRIPT_SCAN = 3
+const MAX_ENDPOINT_SCAN = 8
 
 const stripTags = (value) =>
   value
@@ -78,6 +80,119 @@ const parseStatusFromSource = (source) => {
   return null
 }
 
+const normalizeUrl = (baseUrl, candidate) => {
+  try {
+    return new URL(candidate, baseUrl).toString()
+  } catch {
+    return null
+  }
+}
+
+const extractScriptUrls = (html, baseUrl) => {
+  const scriptMatches = Array.from(html.matchAll(/<script[^>]*src=["']([^"']+)["'][^>]*>/gi))
+  const urls = scriptMatches
+    .map((match) => normalizeUrl(baseUrl, match[1]))
+    .filter((value) => Boolean(value))
+  return Array.from(new Set(urls))
+}
+
+const extractCandidateApiUrls = (scriptSource, baseUrl) => {
+  const candidates = new Set()
+  const absoluteApiMatches = scriptSource.match(/https?:\/\/[^"'\\\s]+\/api\/[^"'\\\s)]+/gi) ?? []
+  absoluteApiMatches.forEach((value) => candidates.add(value))
+
+  const relativeApiMatches = scriptSource.match(/\/api\/[a-z0-9/_-]+/gi) ?? []
+  relativeApiMatches.forEach((value) => {
+    const normalized = normalizeUrl(baseUrl, value)
+    if (normalized) {
+      candidates.add(normalized)
+    }
+  })
+
+  return Array.from(candidates)
+}
+
+const parseStatusFromApiPayload = (payloadText) => {
+  const parsed = parseStatusFromSource(payloadText)
+  if (parsed) {
+    return parsed
+  }
+  const lower = payloadText.toLowerCase()
+  if (lower.includes('no warning') || lower.includes('no warnings')) {
+    return { noWarning: true, statusMessage: 'No warning' }
+  }
+  if (/\bwarning\b|\bwaning\b/i.test(payloadText)) {
+    return {
+      noWarning: false,
+      statusMessage: 'Warning present, check river details.',
+    }
+  }
+  return null
+}
+
+const tryResolveStatusFromScripts = async (html, baseUrl) => {
+  const scriptUrls = extractScriptUrls(html, baseUrl).slice(0, MAX_SCRIPT_SCAN)
+  const triedScriptUrls = []
+  const triedApiUrls = []
+
+  for (const scriptUrl of scriptUrls) {
+    triedScriptUrls.push(scriptUrl)
+    let scriptText = ''
+    try {
+      const scriptResponse = await fetch(scriptUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        redirect: 'follow',
+      })
+      if (!scriptResponse.ok) {
+        continue
+      }
+      scriptText = await scriptResponse.text()
+    } catch {
+      continue
+    }
+
+    const candidateApiUrls = extractCandidateApiUrls(scriptText, baseUrl).slice(0, MAX_ENDPOINT_SCAN)
+    for (const apiUrl of candidateApiUrls) {
+      triedApiUrls.push(apiUrl)
+      try {
+        const apiResponse = await fetch(apiUrl, {
+          method: 'GET',
+          cache: 'no-store',
+          redirect: 'follow',
+          headers: { Accept: 'application/json,text/plain,*/*' },
+        })
+        if (!apiResponse.ok) {
+          continue
+        }
+        const payloadText = await apiResponse.text()
+        const parsed = parseStatusFromApiPayload(payloadText)
+        if (parsed) {
+          return {
+            parsed,
+            debug: {
+              scriptUrls: triedScriptUrls,
+              apiUrls: triedApiUrls,
+              resolvedFrom: apiUrl,
+            },
+          }
+        }
+      } catch {
+        // ignore and continue probing
+      }
+    }
+  }
+
+  return {
+    parsed: null,
+    debug: {
+      scriptUrls: triedScriptUrls,
+      apiUrls: triedApiUrls,
+      resolvedFrom: null,
+    },
+  }
+}
+
 const parseRiverStatus = (html) => {
   const escaped = decodeEscapedMarkup(html)
   const strictParsed = parseStatusFromSource(html) ?? parseStatusFromSource(escaped)
@@ -148,7 +263,15 @@ export default async function handler(req, res) {
 
     const html = await response.text()
     const escaped = decodeEscapedMarkup(html)
-    const parsed = parseRiverStatus(html)
+    let parsed = parseRiverStatus(html)
+    let scriptScanDebug = null
+    if (parsed.statusMessage.startsWith('Warning present or unavailable')) {
+      const resolved = await tryResolveStatusFromScripts(html, response.url || RIVER_STATUS_URL)
+      scriptScanDebug = resolved.debug
+      if (resolved.parsed) {
+        parsed = resolved.parsed
+      }
+    }
     const debugRequested =
       req.query?.debug === '1' ||
       (Array.isArray(req.query?.debug) && req.query.debug.includes('1'))
@@ -179,6 +302,7 @@ export default async function handler(req, res) {
           hasNoWarningEscaped,
           hasWarning,
           hasWarningEscaped,
+          scriptScanDebug,
           sample: html.slice(0, 500),
         },
       })
