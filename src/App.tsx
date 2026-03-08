@@ -134,7 +134,9 @@ type RaceEventBoatLink = {
 type RaceEvent = {
   id: string
   title: string
-  event_date: string
+  start_date: string
+  end_date: string
+  driver: string | null
   created_by: string | null
   race_event_boats?: RaceEventBoatLink[] | null
 }
@@ -264,6 +266,21 @@ const inferBoatTypeForRiskAssessment = (booking: Booking) => {
     return BOAT_TYPE_OPTIONS[1]
   }
   return BOAT_TYPE_OPTIONS[0]
+}
+
+const getCoordinatorLabelForRiskAssessment = (
+  booking: Booking,
+  currentMember: Member | null,
+  isGuest: boolean,
+) => {
+  const coordinatorName = getRelatedName(booking.members) ?? currentMember?.name ?? ''
+  if (!isGuest || !currentMember) {
+    return coordinatorName
+  }
+  if (!coordinatorName || coordinatorName === currentMember.name) {
+    return currentMember.name
+  }
+  return `${coordinatorName} (${currentMember.name})`
 }
 
 const abbreviateBoatNameForRaceEvents = (value: string) => {
@@ -489,9 +506,12 @@ function App() {
   })
   const [raceEventForm, setRaceEventForm] = useState({
     title: '',
-    event_date: getTodayString(),
+    start_date: getTodayString(),
+    end_date: getTodayString(),
+    driver: '',
     boatIds: [] as string[],
   })
+  const [raceEventBoatSearch, setRaceEventBoatSearch] = useState('')
   const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
   const datePickerRef = useRef<HTMLInputElement | null>(null)
@@ -639,8 +659,11 @@ function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession)
+      if (event === 'SIGNED_IN') {
+        setViewMode('schedule')
+      }
     })
 
     return () => {
@@ -958,9 +981,9 @@ function App() {
     const { data, error } = await supabase
       .from('race_events')
       .select(
-        'id, title, event_date, created_by, race_event_boats(id, boat_id, boats(name,type))',
+        'id, title, start_date, end_date, driver, created_by, race_event_boats(id, boat_id, boats(name,type))',
       )
-      .order('event_date', { ascending: true })
+      .order('start_date', { ascending: true })
       .order('title', { ascending: true })
 
     if (error) {
@@ -985,9 +1008,12 @@ function App() {
     setRaceEventReadOnly(false)
     setRaceEventForm({
       title: '',
-      event_date: getTodayString(),
+      start_date: getTodayString(),
+      end_date: getTodayString(),
+      driver: '',
       boatIds: [],
     })
+    setRaceEventBoatSearch('')
   }
 
   const openRaceEventEditor = (event?: RaceEvent, options?: { readOnly?: boolean }) => {
@@ -998,9 +1024,12 @@ function App() {
     setRaceEventReadOnly(Boolean(options?.readOnly))
     setRaceEventForm({
       title: event?.title ?? '',
-      event_date: event?.event_date ?? getTodayString(),
+      start_date: event?.start_date ?? getTodayString(),
+      end_date: event?.end_date ?? event?.start_date ?? getTodayString(),
+      driver: event?.driver ?? '',
       boatIds: (event?.race_event_boats ?? []).map((link) => link.boat_id),
     })
+    setRaceEventBoatSearch('')
   }
 
   const fetchRaceEventConflictingBoatIds = useCallback(
@@ -1011,9 +1040,10 @@ function App() {
 
       const { data, error } = await supabase
         .from('race_event_boats')
-        .select('boat_id, race_events!inner(event_date)')
+        .select('boat_id, race_events!inner(start_date,end_date)')
         .in('boat_id', boatIds)
-        .eq('race_events.event_date', eventDate)
+        .lte('race_events.start_date', eventDate)
+        .gte('race_events.end_date', eventDate)
 
       if (error) {
         throw new Error(error.message)
@@ -1072,7 +1102,7 @@ function App() {
     const ownerMemberId = booking.member_id ?? currentMember?.id ?? ''
 
     const defaultForm = {
-      coordinator_name: getRelatedName(booking.members) ?? currentMember?.name ?? '',
+      coordinator_name: getCoordinatorLabelForRiskAssessment(booking, currentMember, isGuest),
       session_date: toDateInputValue(booking.start_time),
       session_time: formatTimeInput(booking.start_time),
       crew_type: '',
@@ -1789,6 +1819,9 @@ function App() {
   }, [scheduleDayGroups, viewMode])
 
   const canOpenScheduleItem = (item: ScheduleItem) => {
+    if (isGuest) {
+      return true
+    }
     if (item.isTemplate) {
       if (viewMode === 'templates') {
         return isAdmin
@@ -2151,6 +2184,7 @@ function App() {
     if (error) {
       await supabase.auth.signOut({ scope: 'local' })
     }
+    setViewMode('schedule')
     setStatus('Logged out.')
     setAuthView('signin')
   }
@@ -2999,7 +3033,7 @@ function App() {
     }
 
     const payload = {
-      member_id: riskAssessmentBooking.member_id ?? currentMember.id,
+      member_id: isGuest ? currentMember.id : riskAssessmentBooking.member_id ?? currentMember.id,
       ...riskAssessmentForm,
       updated_at: new Date().toISOString(),
     }
@@ -3105,14 +3139,21 @@ function App() {
     }
 
     const title = raceEventForm.title.trim()
-    const eventDate = raceEventForm.event_date
+    const startDate = raceEventForm.start_date
+    const endDate = raceEventForm.end_date
+    const driver = raceEventForm.driver.trim()
     const boatIds = Array.from(new Set(raceEventForm.boatIds))
 
     setError(null)
     setStatus(null)
 
-    if (!title || !eventDate) {
-      setError('Enter an event title and date.')
+    if (!title || !startDate || !endDate) {
+      setError('Enter an event title, start date, and end date.')
+      return
+    }
+
+    if (new Date(`${endDate}T12:00:00`) < new Date(`${startDate}T12:00:00`)) {
+      setError('End date must be on or after the start date.')
       return
     }
 
@@ -3127,7 +3168,9 @@ function App() {
         .from('race_events')
         .update({
           title,
-          event_date: eventDate,
+          start_date: startDate,
+          end_date: endDate,
+          driver: driver || null,
         })
         .eq('id', editingRaceEvent.id)
 
@@ -3140,7 +3183,9 @@ function App() {
         .from('race_events')
         .insert({
           title,
-          event_date: eventDate,
+          start_date: startDate,
+          end_date: endDate,
+          driver: driver || null,
           created_by: currentMember?.id ?? null,
         })
         .select('id')
@@ -3190,7 +3235,8 @@ function App() {
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          eventDate,
+          eventStartDate: startDate,
+          eventEndDate: endDate,
           title,
           boatIds,
           previousBoatIds,
@@ -3950,8 +3996,10 @@ function App() {
                 <table className="race-events-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th>Start</th>
+                      <th>End</th>
                       <th>Title</th>
+                      <th>Driver</th>
                       <th>Boats</th>
                     </tr>
                   </thead>
@@ -3971,8 +4019,10 @@ function App() {
                           key={event.id}
                           onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
                         >
-                          <td>{formatDateLabel(event.event_date)}</td>
+                          <td>{formatDateLabel(event.start_date)}</td>
+                          <td>{formatDateLabel(event.end_date)}</td>
                           <td>{event.title}</td>
+                          <td>{event.driver ?? ''}</td>
                           <td>{boatLabels.join(', ')}</td>
                         </tr>
                       )
@@ -4001,7 +4051,7 @@ function App() {
                       <div className="field">
                         <span>Shared logic</span>
                         <p className="helper">
-                          Boats assigned to a race event cannot be booked on the event date.
+                          Boats assigned to a race event cannot be booked during the event period.
                           Recurring template bookings must be confirmed in advance or they are
                           skipped automatically. A completed outing must then be confirmed as
                           happened or did not happen.
@@ -4738,18 +4788,24 @@ function App() {
                     {formatTime(editingTemplate.end_time)}
                   </span>
                 </div>
-                <button
-                  className="button primary"
-                  onClick={handleConfirmTemplateBooking}
-                  disabled={pendingTemplateActionId === editingTemplate.templateId}
-                >
-                  {pendingTemplateActionId === editingTemplate.templateId
-                    ? 'Confirming...'
-                    : 'Confirm the booking'}
-                </button>
-                <button className="button ghost danger" onClick={handleDeleteTemplate}>
-                  Skip for this date
-                </button>
+                {isGuest ? (
+                  <p className="helper">Template booking is read-only for guests.</p>
+                ) : (
+                  <>
+                    <button
+                      className="button primary"
+                      onClick={handleConfirmTemplateBooking}
+                      disabled={pendingTemplateActionId === editingTemplate.templateId}
+                    >
+                      {pendingTemplateActionId === editingTemplate.templateId
+                        ? 'Confirming...'
+                        : 'Confirm the booking'}
+                    </button>
+                    <button className="button ghost danger" onClick={handleDeleteTemplate}>
+                      Skip for this date
+                    </button>
+                  </>
+                )}
               </>
             ) : viewMode === 'templates' ? (
               <>
@@ -4985,14 +5041,32 @@ function App() {
                     Past bookings and bookings waiting for confirmation are read-only.
                   </p>
                 ) : null}
-                {isEditingBookingLocked && editingBooking && bookingHasLinkedRiskAssessment ? (
-                  <button
-                    className="button ghost"
-                    type="button"
-                    onClick={() => openRiskAssessmentEditor(editingBooking, { readOnly: true })}
-                  >
-                    Risk Assessment
-                  </button>
+                {isEditingBookingLocked && editingBooking ? (
+                  isGuest ? (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={() => openRiskAssessmentEditor(editingBooking)}
+                      disabled={!canOpenRiskAssessment(editingBooking)}
+                      title={
+                        canOpenRiskAssessment(editingBooking)
+                          ? undefined
+                          : getRiskAssessmentAvailabilityMessage(editingBooking)
+                      }
+                    >
+                      {bookingHasLinkedRiskAssessment
+                        ? 'Risk Assessment'
+                        : 'Create / Link Risk Assessment'}
+                    </button>
+                  ) : bookingHasLinkedRiskAssessment ? (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={() => openRiskAssessmentEditor(editingBooking, { readOnly: true })}
+                    >
+                      Risk Assessment
+                    </button>
+                  ) : null
                 ) : null}
               </>
             )}
@@ -5314,18 +5388,46 @@ function App() {
                 />
               </label>
               <label className="field">
-                <span>Date</span>
+                <span>Start date</span>
                 <input
                   type="date"
-                  value={raceEventForm.event_date}
+                  value={raceEventForm.start_date}
                   readOnly={raceEventReadOnly}
                   onChange={(event) =>
-                    setRaceEventForm((prev) => ({ ...prev, event_date: event.target.value }))
+                    setRaceEventForm((prev) => ({ ...prev, start_date: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>End date</span>
+                <input
+                  type="date"
+                  value={raceEventForm.end_date}
+                  readOnly={raceEventReadOnly}
+                  onChange={(event) =>
+                    setRaceEventForm((prev) => ({ ...prev, end_date: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Driver</span>
+                <input
+                  value={raceEventForm.driver}
+                  readOnly={raceEventReadOnly}
+                  onChange={(event) =>
+                    setRaceEventForm((prev) => ({ ...prev, driver: event.target.value }))
                   }
                 />
               </label>
               <div className="field">
                 <span>Boats</span>
+                <input
+                  type="text"
+                  placeholder="Search boat type or name"
+                  value={raceEventBoatSearch}
+                  readOnly={raceEventReadOnly}
+                  onChange={(event) => setRaceEventBoatSearch(event.target.value)}
+                />
                 <div className="selected-boat-list">
                   {raceEventForm.boatIds.length === 0 ? (
                     <span className="chip muted">No boats selected</span>
@@ -5358,7 +5460,16 @@ function App() {
                   )}
                 </div>
                 <div className="boat-list">
-                  {boats.map((boat) => {
+                  {boats
+                    .filter((boat) => {
+                      const query = raceEventBoatSearch.trim().toLowerCase()
+                      if (!query) {
+                        return true
+                      }
+                      const label = `${boat.type ?? ''} ${boat.name}`.toLowerCase()
+                      return label.includes(query)
+                    })
+                    .map((boat) => {
                     const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
                     const checked = raceEventForm.boatIds.includes(boat.id)
                     return (

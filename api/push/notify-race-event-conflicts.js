@@ -52,6 +52,16 @@ const formatLondonDate = (value) =>
     month: 'short',
   }).format(new Date(`${value}T12:00:00`))
 
+const formatDateRange = (startDate, endDate) => {
+  if (!startDate || !endDate) {
+    return ''
+  }
+  if (startDate === endDate) {
+    return formatLondonDate(startDate)
+  }
+  return `${formatLondonDate(startDate)} - ${formatLondonDate(endDate)}`
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed.' })
@@ -71,11 +81,22 @@ export default async function handler(req, res) {
     return
   }
 
-  const eventDate = typeof payload.eventDate === 'string' ? payload.eventDate : null
+  const eventStartDate =
+    typeof payload.eventStartDate === 'string'
+      ? payload.eventStartDate
+      : typeof payload.eventDate === 'string'
+        ? payload.eventDate
+        : null
+  const eventEndDate =
+    typeof payload.eventEndDate === 'string'
+      ? payload.eventEndDate
+      : typeof payload.eventDate === 'string'
+        ? payload.eventDate
+        : null
   const title = typeof payload.title === 'string' ? payload.title : 'Race event'
   const boatIds = Array.isArray(payload.boatIds) ? payload.boatIds.filter((id) => typeof id === 'string') : []
 
-  if (!eventDate || boatIds.length === 0) {
+  if (!eventStartDate || !eventEndDate || boatIds.length === 0) {
     res.status(400).json({ error: 'Missing race event data.' })
     return
   }
@@ -102,8 +123,8 @@ export default async function handler(req, res) {
     return
   }
 
-  const dayStart = new Date(`${eventDate}T00:00:00`)
-  const dayEnd = new Date(dayStart)
+  const dayStart = new Date(`${eventStartDate}T00:00:00`)
+  const dayEnd = new Date(`${eventEndDate}T00:00:00`)
   dayEnd.setDate(dayEnd.getDate() + 1)
 
   const { data: bookings, error: bookingError } = await supabaseAdmin
@@ -138,9 +159,10 @@ export default async function handler(req, res) {
       }
 
       const boatName = booking.boats?.name || 'Boat'
+      const formattedRange = formatDateRange(eventStartDate, eventEndDate)
       await sendToMember(booking.member_id, {
         title: 'Booking conflicts with race event',
-        body: `${boatName} is now assigned to "${title}" on ${formatLondonDate(eventDate)}. Your booking conflicts with this race event.`,
+        body: `${boatName} is now assigned to "${title}" (${formattedRange}). Your booking conflicts with this race event.`,
         url: '/',
       })
     }),

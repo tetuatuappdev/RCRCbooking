@@ -23,9 +23,12 @@ create table if not exists boats (
 create table if not exists race_events (
   id uuid primary key default gen_random_uuid(),
   title text not null,
-  event_date date not null,
+  start_date date not null,
+  end_date date not null,
+  driver text,
   created_by uuid references members(id) on delete set null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint race_events_date_range_check check (end_date >= start_date)
 );
 
 create table if not exists race_event_boats (
