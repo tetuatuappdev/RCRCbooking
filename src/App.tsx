@@ -237,6 +237,44 @@ const formatDayLabel = (value: string) => {
   const month = date.toLocaleDateString([], { month: 'short' })
   return `${weekday} ${day}${suffix} of ${month}`
 }
+
+const formatDateLabel = (value: string) => {
+  const date = new Date(`${value}T12:00:00`)
+  const day = date.getDate()
+  const suffix =
+    day % 10 === 1 && day !== 11
+      ? 'st'
+      : day % 10 === 2 && day !== 12
+        ? 'nd'
+        : day % 10 === 3 && day !== 13
+          ? 'rd'
+          : 'th'
+  const month = date.toLocaleDateString([], { month: 'short' })
+  return `${day}${suffix} of ${month}`
+}
+
+const inferBoatTypeForRiskAssessment = (booking: Booking) => {
+  const relatedType = getRelatedType(booking.boats) ?? ''
+  const relatedName = getRelatedName(booking.boats) ?? ''
+  const combined = `${relatedType} ${relatedName}`.toLowerCase()
+  if (!combined.trim()) {
+    return ''
+  }
+  if (/\b(1x|2x|2-)\b/.test(combined) || combined.includes('small')) {
+    return BOAT_TYPE_OPTIONS[1]
+  }
+  return BOAT_TYPE_OPTIONS[0]
+}
+
+const abbreviateBoatNameForRaceEvents = (value: string) => {
+  const parts = value.trim().split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) {
+    return value
+  }
+  const head = parts[0]?.charAt(0) ?? ''
+  const tail = parts.slice(1).join(' ')
+  return `${head}. ${tail}`
+}
 const getRelatedName = (
   value: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null | undefined,
 ) => {
@@ -486,6 +524,9 @@ function App() {
     risk_actions: '',
     incoming_tide: '',
   })
+  const [riverStatusNoWarning, setRiverStatusNoWarning] = useState(false)
+  const [isRiverStatusLoading, setIsRiverStatusLoading] = useState(false)
+  const [riverStatusMessage, setRiverStatusMessage] = useState('')
   const [accessForm, setAccessForm] = useState({
     email: '',
     name: '',
@@ -1005,6 +1046,9 @@ function App() {
     setAvailableRiskAssessments([])
     setIsRiskAssessmentLoading(false)
     setRiskAssessmentReadOnly(false)
+    setRiverStatusNoWarning(false)
+    setIsRiverStatusLoading(false)
+    setRiverStatusMessage('')
   }
 
   const openRiskAssessmentEditor = async (
@@ -1032,7 +1076,7 @@ function App() {
       session_date: toDateInputValue(booking.start_time),
       session_time: formatTimeInput(booking.start_time),
       crew_type: '',
-      boat_type: '',
+      boat_type: inferBoatTypeForRiskAssessment(booking),
       launch_supervision: '',
       visibility: '',
       river_level: '',
@@ -1131,6 +1175,34 @@ function App() {
         return
       }
       setRiskAssessmentForm(defaultForm)
+    }
+
+    if (!options?.readOnly) {
+      setIsRiverStatusLoading(true)
+      try {
+        const response = await fetch('/api/river-status')
+        if (!response.ok) {
+          throw new Error('Failed to load river status.')
+        }
+        const payload = (await response.json()) as {
+          noWarning?: boolean
+          statusMessage?: string
+        }
+        const noWarning = Boolean(payload?.noWarning)
+        setRiverStatusNoWarning(noWarning)
+        setRiverStatusMessage(
+          payload?.statusMessage?.trim() || (noWarning ? 'No warning' : 'Warning status unavailable.'),
+        )
+      } catch {
+        setRiverStatusNoWarning(false)
+        setRiverStatusMessage('Warning status unavailable. Please check river site.')
+      } finally {
+        setIsRiverStatusLoading(false)
+      }
+    } else {
+      setRiverStatusNoWarning(false)
+      setIsRiverStatusLoading(false)
+      setRiverStatusMessage('')
     }
 
     setIsRiskAssessmentLoading(false)
@@ -2899,8 +2971,29 @@ function App() {
       return
     }
 
-    const requiredValues = Object.values(riskAssessmentForm).map((value) => value.trim())
-    if (requiredValues.some((value) => !value)) {
+    const requiredFieldKeys: (keyof typeof riskAssessmentForm)[] = [
+      'coordinator_name',
+      'session_date',
+      'session_time',
+      'crew_type',
+      'boat_type',
+      'launch_supervision',
+      'risk_actions',
+      'incoming_tide',
+    ]
+    if (!riverStatusNoWarning) {
+      requiredFieldKeys.push(
+        'visibility',
+        'river_level',
+        'water_conditions',
+        'air_temperature',
+        'wind_conditions',
+      )
+    }
+    const hasMissingRequired = requiredFieldKeys.some(
+      (key) => !riskAssessmentForm[key].trim(),
+    )
+    if (hasMissingRequired) {
       setError('Complete all risk assessment fields.')
       return
     }
@@ -3020,11 +3113,6 @@ function App() {
 
     if (!title || !eventDate) {
       setError('Enter an event title and date.')
-      return
-    }
-
-    if (boatIds.length === 0) {
-      setError('Select at least one boat.')
       return
     }
 
@@ -3859,7 +3947,7 @@ function App() {
               </div>
             ) : viewMode === 'raceEvents' ? (
               <div className="access-table">
-                <table>
+                <table className="race-events-table">
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -3874,7 +3962,8 @@ function App() {
                         if (!boat) {
                           return 'Boat'
                         }
-                        return boat.type ? `${boat.type} ${boat.name}` : boat.name
+                        const shortenedBoatName = abbreviateBoatNameForRaceEvents(boat.name)
+                        return boat.type ? `${boat.type} ${shortenedBoatName}` : shortenedBoatName
                       })
 
                       return (
@@ -3882,7 +3971,7 @@ function App() {
                           key={event.id}
                           onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
                         >
-                          <td>{event.event_date}</td>
+                          <td>{formatDateLabel(event.event_date)}</td>
                           <td>{event.title}</td>
                           <td>{boatLabels.join(', ')}</td>
                         </tr>
@@ -5047,100 +5136,111 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <label className="field">
-                  <span>Visibility</span>
-                  <select
-                    value={riskAssessmentForm.visibility}
-                    disabled={riskAssessmentReadOnly}
-                    onChange={(event) =>
-                      setRiskAssessmentForm((prev) => ({ ...prev, visibility: event.target.value }))
-                    }
-                  >
-                    <option value="">Select</option>
-                    {VISIBILITY_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>River level at Ironbridge</span>
-                  <select
-                    value={riskAssessmentForm.river_level}
-                    disabled={riskAssessmentReadOnly}
-                    onChange={(event) =>
-                      setRiskAssessmentForm((prev) => ({ ...prev, river_level: event.target.value }))
-                    }
-                  >
-                    <option value="">Select</option>
-                    {RIVER_LEVEL_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Subjective assessment of water conditions at time of boating</span>
-                  <select
-                    value={riskAssessmentForm.water_conditions}
-                    disabled={riskAssessmentReadOnly}
-                    onChange={(event) =>
-                      setRiskAssessmentForm((prev) => ({
-                        ...prev,
-                        water_conditions: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Select</option>
-                    {WATER_CONDITION_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Air Temperature</span>
-                  <select
-                    value={riskAssessmentForm.air_temperature}
-                    disabled={riskAssessmentReadOnly}
-                    onChange={(event) =>
-                      setRiskAssessmentForm((prev) => ({
-                        ...prev,
-                        air_temperature: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Select</option>
-                    {AIR_TEMPERATURE_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Wind Conditions</span>
-                  <select
-                    value={riskAssessmentForm.wind_conditions}
-                    disabled={riskAssessmentReadOnly}
-                    onChange={(event) =>
-                      setRiskAssessmentForm((prev) => ({
-                        ...prev,
-                        wind_conditions: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Select</option>
-                    {WIND_CONDITION_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {isRiverStatusLoading ? (
+                  <p className="helper">Checking river status...</p>
+                ) : (
+                  <p className="helper">
+                    River status : {riverStatusMessage || (riverStatusNoWarning ? 'No warning' : 'Warning present')}
+                  </p>
+                )}
+                {!isRiverStatusLoading && !riverStatusNoWarning ? (
+                  <>
+                    <label className="field">
+                      <span>Visibility</span>
+                      <select
+                        value={riskAssessmentForm.visibility}
+                        disabled={riskAssessmentReadOnly}
+                        onChange={(event) =>
+                          setRiskAssessmentForm((prev) => ({ ...prev, visibility: event.target.value }))
+                        }
+                      >
+                        <option value="">Select</option>
+                        {VISIBILITY_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>River level at Ironbridge</span>
+                      <select
+                        value={riskAssessmentForm.river_level}
+                        disabled={riskAssessmentReadOnly}
+                        onChange={(event) =>
+                          setRiskAssessmentForm((prev) => ({ ...prev, river_level: event.target.value }))
+                        }
+                      >
+                        <option value="">Select</option>
+                        {RIVER_LEVEL_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Subjective assessment of water conditions at time of boating</span>
+                      <select
+                        value={riskAssessmentForm.water_conditions}
+                        disabled={riskAssessmentReadOnly}
+                        onChange={(event) =>
+                          setRiskAssessmentForm((prev) => ({
+                            ...prev,
+                            water_conditions: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Select</option>
+                        {WATER_CONDITION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Air Temperature</span>
+                      <select
+                        value={riskAssessmentForm.air_temperature}
+                        disabled={riskAssessmentReadOnly}
+                        onChange={(event) =>
+                          setRiskAssessmentForm((prev) => ({
+                            ...prev,
+                            air_temperature: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Select</option>
+                        {AIR_TEMPERATURE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Wind Conditions</span>
+                      <select
+                        value={riskAssessmentForm.wind_conditions}
+                        disabled={riskAssessmentReadOnly}
+                        onChange={(event) =>
+                          setRiskAssessmentForm((prev) => ({
+                            ...prev,
+                            wind_conditions: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Select</option>
+                        {WIND_CONDITION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : null}
                 <label className="field">
                   <span>Actions taken to reduce risks identified above</span>
                   <textarea

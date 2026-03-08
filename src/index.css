@@ -338,6 +338,13 @@ body {
   margin-top: 18px;
 }
 
+.gantt-day {
+  background: rgba(220, 252, 231, 0.45);
+  border: 1px solid rgba(134, 239, 172, 0.5);
+  border-radius: 10px;
+  padding: 8px;
+}
+
 .booking-list {
   flex: 1;
   min-height: 0;
@@ -442,6 +449,32 @@ body {
 
 .access-table tbody tr:hover {
   background: rgba(148, 163, 184, 0.12);
+}
+
+.race-events-table {
+  table-layout: fixed;
+}
+
+.race-events-table th:nth-child(1),
+.race-events-table td:nth-child(1) {
+  width: 115px;
+}
+
+.race-events-table th:nth-child(2),
+.race-events-table td:nth-child(2) {
+  width: 140px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.race-events-table th:last-child,
+.race-events-table td:last-child {
+  width: auto;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .boats-table th {
