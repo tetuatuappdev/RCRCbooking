@@ -147,8 +147,22 @@ create table if not exists template_confirmations (
 create table if not exists boat_permissions (
   boat_id uuid not null references boats(id) on delete cascade,
   member_id uuid not null references members(id) on delete cascade,
+  permission_until date,
   created_at timestamptz not null default now(),
   primary key (boat_id, member_id)
+);
+
+create table if not exists captain_booking_requests (
+  id uuid primary key default gen_random_uuid(),
+  boat_id uuid not null references boats(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  requested_start_time timestamptz not null,
+  requested_end_time timestamptz not null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  decided_at timestamptz,
+  decided_by_member_id uuid references members(id) on delete set null,
+  booking_id uuid references bookings(id) on delete set null,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists admins (
@@ -224,6 +238,7 @@ alter table booking_risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
 alter table template_confirmations enable row level security;
 alter table boat_permissions enable row level security;
+alter table captain_booking_requests enable row level security;
 alter table race_events enable row level security;
 alter table race_event_boats enable row level security;
 alter table race_event_change_requests enable row level security;
@@ -329,6 +344,62 @@ create policy "Race event requests readable" on race_event_change_requests
     or exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Captain booking requests readable" on captain_booking_requests
+  for select to authenticated
+  using (
+    member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Captain booking requests insert by requester" on captain_booking_requests
+  for insert to authenticated
+  with check (
+    member_id = (select id from members where email = auth.email())
+    and status = 'pending'
+  );
+
+create policy "Captain booking requests update by approvers" on captain_booking_requests
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
@@ -791,13 +862,20 @@ create policy "Bookings insert for authed" on bookings
       select 1
       from allowed_member am
       where lower(am.email) = lower(auth.email())
-      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end)
+        in ('admin', 'captain', 'coordinator')
     )
     and (
       member_id = (select id from members where email = auth.email())
       or exists (
         select 1 from admins
         where member_id = (select id from members where email = auth.email())
+      )
+      or exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
       )
     )
   );

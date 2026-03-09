@@ -123,6 +123,12 @@ type TemplateConfirmation = {
 type BoatPermission = {
   boat_id: string
   member_id: string
+  permission_until?: string | null
+}
+
+type BoatPermissionEntry = {
+  member_id: string
+  permission_until: string
 }
 
 type RaceEventBoatLink = {
@@ -152,6 +158,24 @@ type RaceEvent = {
   driver: string | null
   created_by: string | null
   race_event_boats?: RaceEventBoatLink[] | null
+}
+
+type CaptainBookingRequest = {
+  id: string
+  boat_id: string
+  member_id: string
+  requested_start_time: string
+  requested_end_time: string
+  status: 'pending' | 'approved' | 'rejected'
+  decided_at?: string | null
+  decided_by_member_id?: string | null
+  booking_id?: string | null
+  created_at: string
+  boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+  requester_member?:
+    | { name: string; email?: string | null }
+    | { name: string; email?: string | null }[]
+    | null
 }
 
 type RaceEventChangeRequest = {
@@ -285,6 +309,13 @@ const formatDateLabel = (value: string) => {
           : 'th'
   const month = date.toLocaleDateString([], { month: 'short' })
   return `${day}${suffix} of ${month}`
+}
+
+const isPermissionValidForDate = (permissionUntil: string | null | undefined, date: string) => {
+  if (!permissionUntil) {
+    return true
+  }
+  return permissionUntil >= date
 }
 
 const inferBoatTypeForRiskAssessment = (booking: Booking) => {
@@ -480,9 +511,10 @@ function App() {
   const [pendingTemplateConfirmations, setPendingTemplateConfirmations] = useState<
     TemplateConfirmation[]
   >([])
+  const [captainBookingRequests, setCaptainBookingRequests] = useState<CaptainBookingRequest[]>([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
-  const [boatPermissions, setBoatPermissions] = useState<Record<string, Set<string>>>({})
+  const [boatPermissions, setBoatPermissions] = useState<Record<string, Record<string, string | null>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
   const [authView, setAuthView] = useState<'signin' | 'signup' | 'recovery' | 'setPassword'>(
     'signin',
@@ -516,6 +548,7 @@ function App() {
     | 'raceEvents'
     | 'pendingConfirmations'
     | 'riskAssessments'
+    | 'captainApprovals'
   >('schedule')
 
   const [showNewBooking, setShowNewBooking] = useState(false)
@@ -556,8 +589,9 @@ function App() {
     boatIds: [] as string[],
   })
   const [raceEventBoatSearch, setRaceEventBoatSearch] = useState('')
-  const [boatPermissionIds, setBoatPermissionIds] = useState<string[]>([])
+  const [boatPermissionEntries, setBoatPermissionEntries] = useState<BoatPermissionEntry[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
+  const [selectedPermissionUntil, setSelectedPermissionUntil] = useState('')
   const datePickerRef = useRef<HTMLInputElement | null>(null)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
   const [isAuthBusy, setIsAuthBusy] = useState(false)
@@ -616,7 +650,11 @@ function App() {
   const canManageRaceEvents = isAdmin || isCoordinator
   const canApproveRaceEventRequests = isAdmin || isCaptain
   const canManageFleet = isAdmin || isCaptain
+  const canApproveCaptainBookingRequests = isAdmin || isCaptain
   const pendingRaceEventRequestCount = canApproveRaceEventRequests ? raceEventChangeRequests.length : 0
+  const pendingCaptainBookingRequestCount = canApproveCaptainBookingRequests
+    ? captainBookingRequests.filter((request) => request.status === 'pending').length
+    : 0
   const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
     !isAdmin && !isCaptain && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
@@ -773,6 +811,7 @@ function App() {
       setIsAdmin(false)
       setRoleFromAllowlist(null)
       setBookings([])
+      setCaptainBookingRequests([])
       setRaceEventChangeRequests([])
       setTemplateBookings([])
       setTemplateExceptions([])
@@ -966,19 +1005,19 @@ function App() {
   const fetchBoatPermissions = useCallback(async () => {
     const { data, error } = await supabase
       .from('boat_permissions')
-      .select('boat_id, member_id')
+      .select('boat_id, member_id, permission_until')
 
     if (error) {
       setError(error.message)
       return
     }
 
-    const map: Record<string, Set<string>> = {}
+    const map: Record<string, Record<string, string | null>> = {}
     ;(data ?? []).forEach((row: BoatPermission) => {
       if (!map[row.boat_id]) {
-        map[row.boat_id] = new Set()
+        map[row.boat_id] = {}
       }
-      map[row.boat_id].add(row.member_id)
+      map[row.boat_id][row.member_id] = row.permission_until ?? null
     })
     setBoatPermissions(map)
   }, [])
@@ -1149,6 +1188,35 @@ function App() {
       })),
     )
   }, [canApproveRaceEventRequests, currentMember, session, userRole])
+
+  const fetchCaptainBookingRequests = useCallback(async () => {
+    if (!session || !currentMember || !canApproveCaptainBookingRequests) {
+      setCaptainBookingRequests([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('captain_booking_requests')
+      .select(
+        'id, boat_id, member_id, requested_start_time, requested_end_time, status, decided_at, decided_by_member_id, booking_id, created_at, boats(name,type), requester_member:members!captain_booking_requests_member_id_fkey(name,email)',
+      )
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setCaptainBookingRequests(
+      (data ?? []).map((row) => ({
+        ...row,
+        requester_member: Array.isArray(row.requester_member)
+          ? row.requester_member[0] ?? null
+          : row.requester_member ?? null,
+      })),
+    )
+  }, [canApproveCaptainBookingRequests, currentMember, session])
 
   const resetRaceEventForm = () => {
     setShowRaceEventEditor(false)
@@ -1523,12 +1591,9 @@ function App() {
       if (usage === 'restricted') {
         return false
       }
-      if (usage === 'captains permission') {
-        return isAdmin || (memberId ? boatPermissions[boat.id]?.has(memberId) : false)
-      }
       return true
     })
-  }, [boats, boatPermissions, currentMember, isAdmin])
+  }, [boats, currentMember, isAdmin])
 
   const bookingBoatsSource = useMemo(() => {
     return isAdmin ? boats : allowedBoats
@@ -1607,11 +1672,12 @@ function App() {
       (viewMode === 'templates' && !canManageFleet) ||
       (viewMode === 'access' && !canManageAccess) ||
       (viewMode === 'groups' && !canManageAccess) ||
+      (viewMode === 'captainApprovals' && !canApproveCaptainBookingRequests) ||
       (viewMode === 'riskAssessments' && !isAdmin)
     ) {
       setViewMode('schedule')
     }
-  }, [canManageAccess, canManageFleet, isAdmin, viewMode])
+  }, [canApproveCaptainBookingRequests, canManageAccess, canManageFleet, isAdmin, viewMode])
 
   useEffect(() => {
     if (viewMode === 'riskAssessments' && session) {
@@ -1627,10 +1693,22 @@ function App() {
   }, [fetchRaceEventChangeRequests, fetchRaceEvents, session, viewMode])
 
   useEffect(() => {
+    if (viewMode === 'captainApprovals' && session && canApproveCaptainBookingRequests) {
+      fetchCaptainBookingRequests()
+    }
+  }, [canApproveCaptainBookingRequests, fetchCaptainBookingRequests, session, viewMode])
+
+  useEffect(() => {
     if (session && canApproveRaceEventRequests) {
       fetchRaceEventChangeRequests()
     }
   }, [canApproveRaceEventRequests, fetchRaceEventChangeRequests, session])
+
+  useEffect(() => {
+    if (session && canApproveCaptainBookingRequests) {
+      fetchCaptainBookingRequests()
+    }
+  }, [canApproveCaptainBookingRequests, fetchCaptainBookingRequests, session])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -2092,6 +2170,21 @@ function App() {
     return Boolean(currentMember && item.member_id === currentMember.id)
   }
 
+  const hasActiveCaptainPermission = (
+    boatId: string,
+    memberId: string | null | undefined,
+    bookingDate: string,
+  ) => {
+    if (!memberId) {
+      return false
+    }
+    const permissionUntil = boatPermissions[boatId]?.[memberId]
+    if (permissionUntil === undefined) {
+      return false
+    }
+    return isPermissionValidForDate(permissionUntil, bookingDate)
+  }
+
   const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
     return data.session?.access_token ?? null
@@ -2368,8 +2461,9 @@ function App() {
         in_service: '',
         notes: '',
       })
-      setBoatPermissionIds([])
+      setBoatPermissionEntries([])
       setSelectedPermissionMemberId('')
+      setSelectedPermissionUntil('')
       return
     }
     setEditingBoat(boat)
@@ -2384,8 +2478,16 @@ function App() {
       notes: boat.notes ?? '',
     })
     const boatPerms = boatPermissions[boat.id]
-    setBoatPermissionIds(boatPerms ? Array.from(boatPerms) : [])
+    setBoatPermissionEntries(
+      boatPerms
+        ? Object.entries(boatPerms).map(([memberId, permissionUntil]) => ({
+            member_id: memberId,
+            permission_until: permissionUntil ?? '',
+          }))
+        : [],
+    )
     setSelectedPermissionMemberId('')
+    setSelectedPermissionUntil('')
   }
 
   const handleSaveBoat = async () => {
@@ -2424,10 +2526,11 @@ function App() {
 
     if (boatForm.usage_type.toLowerCase() === 'captains permission' && boatId) {
       await supabase.from('boat_permissions').delete().eq('boat_id', boatId)
-      if (boatPermissionIds.length > 0) {
-        const inserts = boatPermissionIds.map((memberId) => ({
+      if (boatPermissionEntries.length > 0) {
+        const inserts = boatPermissionEntries.map((entry) => ({
           boat_id: boatId,
-          member_id: memberId,
+          member_id: entry.member_id,
+          permission_until: entry.permission_until || null,
         }))
         const { error: permsError } = await supabase.from('boat_permissions').insert(inserts)
         if (permsError) {
@@ -2646,6 +2749,7 @@ function App() {
       return
     }
 
+    const approvalRequiredBoatIds: string[] = []
     for (const boatId of selectedBoatIds) {
       const boat = boats.find((item) => item.id === boatId)
       const usage = (boat?.usage_type ?? '').toLowerCase()
@@ -2655,9 +2759,8 @@ function App() {
       }
       if (usage === 'captains permission' && !isAdmin) {
         const memberId = currentMember?.id
-        if (!memberId || !boatPermissions[boatId]?.has(memberId)) {
-          window.alert('You do not have permission to book one of the selected boats.')
-          return
+        if (!hasActiveCaptainPermission(boatId, memberId, selectedDate)) {
+          approvalRequiredBoatIds.push(boatId)
         }
       }
     }
@@ -2768,6 +2871,11 @@ function App() {
       return
     }
 
+    if (editingBooking && approvalRequiredBoatIds.length > 0) {
+      window.alert('This captain permission booking requires validation first. Create a new request instead.')
+      return
+    }
+
     if (editingBooking) {
       const { error: updateError } = await supabase
         .from('bookings')
@@ -2785,22 +2893,68 @@ function App() {
       }
       setStatus('Booking updated.')
     } else {
-      const inserts = selectedBoatIds.map((boatId) => ({
+      const directBookingBoatIds = selectedBoatIds.filter(
+        (boatId) => !approvalRequiredBoatIds.includes(boatId),
+      )
+      const inserts = directBookingBoatIds.map((boatId) => ({
         boat_id: boatId,
         member_id: effectiveMemberId,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
       }))
-      const { error: insertError } = await supabase
-        .from('bookings')
-        .insert(inserts)
-        .select('id')
 
-      if (insertError) {
-        setError(insertError.message)
-        return
+      if (inserts.length > 0) {
+        const { error: insertError } = await supabase.from('bookings').insert(inserts).select('id')
+
+        if (insertError) {
+          setError(insertError.message)
+          return
+        }
       }
-      setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
+
+      if (approvalRequiredBoatIds.length > 0) {
+        const requestsPayload = approvalRequiredBoatIds.map((boatId) => ({
+          boat_id: boatId,
+          member_id: effectiveMemberId,
+          requested_start_time: startDate.toISOString(),
+          requested_end_time: endDate.toISOString(),
+          status: 'pending',
+        }))
+
+        const { data: createdRequests, error: requestError } = await supabase
+          .from('captain_booking_requests')
+          .insert(requestsPayload)
+          .select('id')
+
+        if (requestError) {
+          setError(requestError.message)
+          return
+        }
+
+        const accessToken = await getAccessToken()
+        if (accessToken && createdRequests && createdRequests.length > 0) {
+          await fetch('/api/push/notify-captain-booking-request', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              requestIds: createdRequests.map((row) => row.id),
+            }),
+          }).catch(() => undefined)
+        }
+      }
+
+      if (inserts.length > 0 && approvalRequiredBoatIds.length > 0) {
+        setStatus(
+          `${inserts.length} booking(s) confirmed, ${approvalRequiredBoatIds.length} sent for captain approval.`,
+        )
+      } else if (approvalRequiredBoatIds.length > 0) {
+        setStatus(`Request sent for captain approval (${approvalRequiredBoatIds.length}).`)
+      } else {
+        setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
+      }
     }
 
     resetBookingForm()
@@ -3619,6 +3773,107 @@ function App() {
     await fetchRaceEventChangeRequests()
   }
 
+  const handleApproveCaptainBookingRequest = async (request: CaptainBookingRequest) => {
+    if (!canApproveCaptainBookingRequests) {
+      setError('Only captains or admins can approve these requests.')
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { data: bookingRow, error: bookingError } = await supabase
+      .from('bookings')
+      .insert({
+        boat_id: request.boat_id,
+        member_id: request.member_id,
+        start_time: request.requested_start_time,
+        end_time: request.requested_end_time,
+      })
+      .select('id')
+      .single()
+
+    if (bookingError || !bookingRow) {
+      setError(bookingError?.message ?? 'Unable to create approved booking.')
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('captain_booking_requests')
+      .update({
+        status: 'approved',
+        decided_by_member_id: currentMember?.id ?? null,
+        decided_at: new Date().toISOString(),
+        booking_id: bookingRow.id,
+      })
+      .eq('id', request.id)
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    const accessToken = await getAccessToken()
+    if (accessToken) {
+      await fetch('/api/push/notify-captain-booking-decision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          requestId: request.id,
+          decision: 'approved',
+        }),
+      }).catch(() => undefined)
+    }
+
+    setStatus('Booking request approved.')
+    await Promise.all([fetchCaptainBookingRequests(), refreshScheduleDay(selectedDate)])
+  }
+
+  const handleRejectCaptainBookingRequest = async (request: CaptainBookingRequest) => {
+    if (!canApproveCaptainBookingRequests) {
+      setError('Only captains or admins can approve these requests.')
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error: updateError } = await supabase
+      .from('captain_booking_requests')
+      .update({
+        status: 'rejected',
+        decided_by_member_id: currentMember?.id ?? null,
+        decided_at: new Date().toISOString(),
+      })
+      .eq('id', request.id)
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    const accessToken = await getAccessToken()
+    if (accessToken) {
+      await fetch('/api/push/notify-captain-booking-decision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          requestId: request.id,
+          decision: 'rejected',
+        }),
+      }).catch(() => undefined)
+    }
+
+    setStatus('Booking request rejected.')
+    await fetchCaptainBookingRequests()
+  }
+
   const handleSaveAccess = async () => {
     setError(null)
     setStatus(null)
@@ -3900,6 +4155,9 @@ function App() {
                   if (canApproveRaceEventRequests) {
                     fetchRaceEventChangeRequests()
                   }
+                  if (canApproveCaptainBookingRequests) {
+                    fetchCaptainBookingRequests()
+                  }
                 }
                 return next
               })
@@ -3975,6 +4233,22 @@ function App() {
                     <span className="menu-item-alert-dot" aria-hidden="true" />
                   ) : null}
                 </button>
+                {canApproveCaptainBookingRequests ? (
+                  <button
+                    className="menu-item"
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false)
+                      setShowNewBooking(false)
+                      setEditingBooking(null)
+                      setEditingTemplate(null)
+                      setEditingBoat(null)
+                      setViewMode('captainApprovals')
+                    }}
+                  >
+                    Captain approvals ({pendingCaptainBookingRequestCount})
+                  </button>
+                ) : null}
                 {isAdmin ? (
                   <button
                     className="menu-item"
@@ -4529,6 +4803,49 @@ function App() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            ) : viewMode === 'captainApprovals' ? (
+              <div className="access-table">
+                <div className="pending-confirmations-panel">
+                  {captainBookingRequests.length === 0 ? (
+                    <p className="empty-state">No booking approval requests.</p>
+                  ) : (
+                    captainBookingRequests.map((request) => {
+                      const boatName = getRelatedName(request.boats) ?? 'Boat'
+                      const boatType = getRelatedType(request.boats)
+                      const memberName = getRelatedName(request.requester_member) ?? 'Coordinator'
+                      return (
+                        <div key={request.id} className="template-summary pending-confirmation-card">
+                          <div className="template-info">
+                            <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
+                            <span>{memberName}</span>
+                            <span>{formatDayLabel(request.requested_start_time.slice(0, 10))}</span>
+                            <span>
+                              {formatTime(request.requested_start_time)} -{' '}
+                              {formatTime(request.requested_end_time)}
+                            </span>
+                          </div>
+                          <div className="modal-actions">
+                            <button
+                              className="button primary"
+                              type="button"
+                              onClick={() => handleApproveCaptainBookingRequest(request)}
+                            >
+                              Approve booking
+                            </button>
+                            <button
+                              className="button ghost danger"
+                              type="button"
+                              onClick={() => handleRejectCaptainBookingRequest(request)}
+                            >
+                              Reject booking
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
               </div>
             ) : viewMode === 'raceEvents' ? (
               <div className="access-table">
@@ -6317,6 +6634,12 @@ function App() {
                         </option>
                       ))}
                     </select>
+                    <input
+                      type="date"
+                      value={selectedPermissionUntil}
+                      onChange={(event) => setSelectedPermissionUntil(event.target.value)}
+                      placeholder="End date (optional)"
+                    />
                     <button
                       className="button ghost small"
                       type="button"
@@ -6324,9 +6647,25 @@ function App() {
                         if (!selectedPermissionMemberId) {
                           return
                         }
-                        if (!boatPermissionIds.includes(selectedPermissionMemberId)) {
-                          setBoatPermissionIds((prev) => [...prev, selectedPermissionMemberId])
-                        }
+                        setBoatPermissionEntries((prev) => {
+                          const existing = prev.find(
+                            (entry) => entry.member_id === selectedPermissionMemberId,
+                          )
+                          if (existing) {
+                            return prev.map((entry) =>
+                              entry.member_id === selectedPermissionMemberId
+                                ? { ...entry, permission_until: selectedPermissionUntil }
+                                : entry,
+                            )
+                          }
+                          return [
+                            ...prev,
+                            {
+                              member_id: selectedPermissionMemberId,
+                              permission_until: selectedPermissionUntil,
+                            },
+                          ]
+                        })
                       }}
                     >
                       Add
@@ -6338,8 +6677,8 @@ function App() {
                         if (!selectedPermissionMemberId) {
                           return
                         }
-                        setBoatPermissionIds((prev) =>
-                          prev.filter((id) => id !== selectedPermissionMemberId),
+                        setBoatPermissionEntries((prev) =>
+                          prev.filter((entry) => entry.member_id !== selectedPermissionMemberId),
                         )
                       }}
                     >
@@ -6349,8 +6688,17 @@ function App() {
                   <textarea
                     className="permission-list"
                     readOnly
-                    value={boatPermissionIds
-                      .map((id) => members.find((member) => member.id === id)?.name)
+                    value={boatPermissionEntries
+                      .map((entry) => {
+                        const name = members.find((member) => member.id === entry.member_id)?.name
+                        if (!name) {
+                          return null
+                        }
+                        if (!entry.permission_until) {
+                          return name
+                        }
+                        return `${name} (${entry.permission_until})`
+                      })
                       .filter(Boolean)
                       .join('\n')}
                     placeholder="No members selected"
