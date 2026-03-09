@@ -96,8 +96,25 @@ export default async function handler(req, res) {
     .eq('member_id', member.id)
     .maybeSingle()
 
-  if (adminError || !adminRow) {
-    res.status(403).json({ error: 'Only admins can send decision notifications.' })
+  if (adminError) {
+    res.status(500).json({ error: adminError.message })
+    return
+  }
+
+  const { data: allowRow, error: allowError } = await supabaseAdmin
+    .from('allowed_member')
+    .select('role')
+    .ilike('email', user.email)
+    .maybeSingle()
+
+  if (allowError) {
+    res.status(500).json({ error: allowError.message })
+    return
+  }
+
+  const isCaptain = allowRow?.role === 'captain'
+  if (!adminRow && !isCaptain) {
+    res.status(403).json({ error: 'Only captains or admins can send decision notifications.' })
     return
   }
 

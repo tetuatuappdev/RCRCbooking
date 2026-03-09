@@ -160,7 +160,7 @@ create table if not exists allowed_member (
   id uuid primary key default gen_random_uuid(),
   email text unique not null,
   name text not null,
-  role text not null default 'coordinator' check (role in ('admin', 'coordinator', 'guest')),
+  role text not null default 'coordinator' check (role in ('admin', 'captain', 'coordinator', 'guest')),
   is_admin boolean not null default false,
   created_at timestamptz not null default now()
 );
@@ -179,7 +179,7 @@ begin
   ) then
     alter table allowed_member
       add constraint allowed_member_role_check
-      check (role in ('admin', 'coordinator', 'guest'));
+      check (role in ('admin', 'captain', 'coordinator', 'guest'));
   end if;
 end
 $$;
@@ -348,18 +348,30 @@ create policy "Race event requests insert by requester" on race_event_change_req
     and status = 'pending'
   );
 
-create policy "Race event requests update by admins" on race_event_change_requests
+create policy "Race event requests update by captains or admins" on race_event_change_requests
   for update to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   )
   with check (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
@@ -787,7 +799,17 @@ create policy "Allowed members insert for authed" on allowed_member
         select 1 from admins
         where member_id = (select id from members where email = auth.email())
       )
-      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator', 'guest')
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('admin', 'captain', 'coordinator', 'guest')
+    )
+    or (
+      exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('coordinator', 'guest')
+      and coalesce(is_admin, false) = false
     )
     or (
       exists (

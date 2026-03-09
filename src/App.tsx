@@ -173,7 +173,7 @@ type RaceEventChangeRequest = {
   race_events?: Pick<RaceEvent, 'id' | 'title' | 'start_date' | 'end_date'> | null
 }
 
-type UserRole = 'admin' | 'coordinator' | 'guest'
+type UserRole = 'admin' | 'captain' | 'coordinator' | 'guest'
 
 type BookingRiskAssessmentLink = {
   id: string
@@ -356,6 +356,9 @@ const getGanttBoatDisplayName = (value: string | null | undefined) => {
 const getRoleLabel = (role: UserRole) => {
   if (role === 'admin') {
     return 'Admin'
+  }
+  if (role === 'captain') {
+    return 'Captain'
   }
   if (role === 'coordinator') {
     return 'Coordinator'
@@ -606,13 +609,15 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const isCoordinator = userRole === 'coordinator'
-  const isGuest = userRole === 'guest'
-  const canManageAccess = isAdmin || isCoordinator
+  const isCaptain = userRole === 'captain'
+  const isGuest = userRole === 'guest' || isCaptain
+  const canManageAccess = isAdmin || isCoordinator || isCaptain
   const canManageRaceEvents = isAdmin || isCoordinator
-  const pendingRaceEventRequestCount = isAdmin ? raceEventChangeRequests.length : 0
+  const canApproveRaceEventRequests = isAdmin || isCaptain
+  const pendingRaceEventRequestCount = canApproveRaceEventRequests ? raceEventChangeRequests.length : 0
   const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
-    !isAdmin && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
+    !isAdmin && !isCaptain && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
   const shouldShowPushPrompt =
     Boolean(session && currentMember) &&
     pushSupported &&
@@ -800,7 +805,10 @@ function App() {
         return
       }
       const resolvedRole: UserRole =
-        allowed.role === 'admin' || allowed.role === 'coordinator' || allowed.role === 'guest'
+        allowed.role === 'admin' ||
+        allowed.role === 'captain' ||
+        allowed.role === 'coordinator' ||
+        allowed.role === 'guest'
           ? allowed.role
           : allowed.is_admin
             ? 'admin'
@@ -992,7 +1000,10 @@ function App() {
       (data ?? []).map((row) => ({
         ...row,
         role:
-          row.role === 'admin' || row.role === 'coordinator' || row.role === 'guest'
+          row.role === 'admin' ||
+          row.role === 'captain' ||
+          row.role === 'coordinator' ||
+          row.role === 'guest'
             ? row.role
             : row.is_admin
               ? 'admin'
@@ -1099,7 +1110,7 @@ function App() {
   }, [session])
 
   const fetchRaceEventChangeRequests = useCallback(async () => {
-    if (!session || !currentMember || isGuest) {
+    if (!session || !currentMember || userRole === 'guest') {
       setRaceEventChangeRequests([])
       return
     }
@@ -1111,7 +1122,7 @@ function App() {
       )
       .order('created_at', { ascending: false })
 
-    if (isAdmin) {
+    if (canApproveRaceEventRequests) {
       query = query.eq('status', 'pending')
     } else {
       query = query.eq('requested_by_member_id', currentMember.id)
@@ -1135,7 +1146,7 @@ function App() {
           : request.race_events ?? null,
       })),
     )
-  }, [currentMember, isAdmin, isGuest, session])
+  }, [canApproveRaceEventRequests, currentMember, session, userRole])
 
   const resetRaceEventForm = () => {
     setShowRaceEventEditor(false)
@@ -1614,10 +1625,10 @@ function App() {
   }, [fetchRaceEventChangeRequests, fetchRaceEvents, session, viewMode])
 
   useEffect(() => {
-    if (session && isAdmin) {
+    if (session && canApproveRaceEventRequests) {
       fetchRaceEventChangeRequests()
     }
-  }, [fetchRaceEventChangeRequests, isAdmin, session])
+  }, [canApproveRaceEventRequests, fetchRaceEventChangeRequests, session])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -3375,7 +3386,7 @@ function App() {
         }).catch(() => undefined)
       }
 
-      setStatus('Update request sent to admins for validation.')
+      setStatus('Update request sent for captain validation.')
       await fetchRaceEventChangeRequests()
       resetRaceEventForm()
       return
@@ -3473,8 +3484,8 @@ function App() {
   }
 
   const handleApproveRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
-    if (!isAdmin) {
-      setError('Only admins can validate race event requests.')
+    if (!canApproveRaceEventRequests) {
+      setError('Only captains or admins can validate race event requests.')
       return
     }
 
@@ -3556,8 +3567,8 @@ function App() {
   }
 
   const handleRejectRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
-    if (!isAdmin) {
-      setError('Only admins can validate race event requests.')
+    if (!canApproveRaceEventRequests) {
+      setError('Only captains or admins can validate race event requests.')
       return
     }
 
@@ -3615,7 +3626,12 @@ function App() {
     }
 
     const requestedRole = accessForm.role
-    if ((isCoordinator && requestedRole !== 'guest') || (!isAdmin && !isCoordinator)) {
+    const captainAllowed = requestedRole === 'coordinator' || requestedRole === 'guest'
+    if (
+      (isCoordinator && requestedRole !== 'guest') ||
+      (isCaptain && !captainAllowed) ||
+      (!isAdmin && !isCoordinator && !isCaptain)
+    ) {
       setError('You are not allowed to create this type of user.')
       return
     }
@@ -3633,7 +3649,11 @@ function App() {
     }
 
     setStatus('Access added.')
-    setAccessForm({ email: '', name: '', role: isCoordinator ? 'guest' : 'coordinator' })
+    setAccessForm({
+      email: '',
+      name: '',
+      role: isCoordinator ? 'guest' : 'coordinator',
+    })
     setShowAccessEditor(false)
     fetchAllowedMembers()
   }
@@ -3867,7 +3887,7 @@ function App() {
                 if (next) {
                   fetchPendingBookings()
                   fetchPendingTemplateConfirmations()
-                  if (isAdmin) {
+                  if (canApproveRaceEventRequests) {
                     fetchRaceEventChangeRequests()
                   }
                 }
@@ -3879,7 +3899,7 @@ function App() {
             <span />
             <span />
             <span />
-            {isAdmin && pendingRaceEventRequestCount > 0 ? (
+            {canApproveRaceEventRequests && pendingRaceEventRequestCount > 0 ? (
               <span className="menu-alert-dot" aria-hidden="true" />
             ) : null}
           </button>
@@ -3941,7 +3961,7 @@ function App() {
                   }}
                 >
                   Race events
-                  {isAdmin && pendingRaceEventRequestCount > 0 ? (
+                  {canApproveRaceEventRequests && pendingRaceEventRequestCount > 0 ? (
                     <span className="menu-item-alert-dot" aria-hidden="true" />
                   ) : null}
                 </button>
@@ -4016,7 +4036,7 @@ function App() {
                       Risk Assessments
                     </button>
                   </>
-                ) : isCoordinator ? (
+                ) : isCoordinator || isCaptain ? (
                   <>
                     <button
                       className="menu-item"
@@ -4500,9 +4520,9 @@ function App() {
               </div>
             ) : viewMode === 'raceEvents' ? (
               <div className="access-table">
-                {isAdmin ? (
+                {canApproveRaceEventRequests ? (
                   <div className="race-event-requests">
-                    <h3>Pending race event requests</h3>
+                    <h3>Pending captain validations</h3>
                     {raceEventChangeRequests.length === 0 ? (
                       <p className="empty-state">No pending requests.</p>
                     ) : (
@@ -6150,7 +6170,7 @@ function App() {
             {isCoordinatorRaceEventRequestMode ? (
               <p className="helper">
                 Coordinators can add or remove boats. Title, dates, and driver stay unchanged until
-                admin validation.
+                captain validation.
               </p>
             ) : null}
             {isCoordinatorRaceEventRequestMode && coordinatorPendingRaceEventRequest ? (
@@ -6380,8 +6400,14 @@ function App() {
                   {isAdmin ? (
                     <>
                       <option value="coordinator">Coordinator</option>
+                      <option value="captain">Captain</option>
                       <option value="guest">Guest</option>
                       <option value="admin">Admin</option>
+                    </>
+                  ) : isCaptain ? (
+                    <>
+                      <option value="coordinator">Coordinator</option>
+                      <option value="guest">Guest</option>
                     </>
                   ) : (
                     <option value="guest">Guest</option>

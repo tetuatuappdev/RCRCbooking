@@ -109,6 +109,39 @@ export default async function handler(req, res) {
     return
   }
 
+  const { data: captains, error: captainsError } = await supabaseAdmin
+    .from('allowed_member')
+    .select('email')
+    .eq('role', 'captain')
+
+  if (captainsError) {
+    res.status(500).json({ error: captainsError.message })
+    return
+  }
+
+  const captainEmails = (captains ?? []).map((row) => row.email).filter(Boolean)
+  let captainMemberIds = []
+  if (captainEmails.length > 0) {
+    const { data: captainMembers, error: captainMembersError } = await supabaseAdmin
+      .from('members')
+      .select('id,email')
+      .in('email', captainEmails)
+
+    if (captainMembersError) {
+      res.status(500).json({ error: captainMembersError.message })
+      return
+    }
+    captainMemberIds = (captainMembers ?? []).map((row) => row.id)
+  }
+
+  const approverIds = Array.from(
+    new Set([...(admins ?? []).map((row) => row.member_id), ...captainMemberIds]),
+  )
+  if (approverIds.length === 0) {
+    res.status(200).json({ ok: true, sent: 0 })
+    return
+  }
+
   const previousSet = new Set(request.previous_boat_ids ?? [])
   const requestedSet = new Set(request.requested_boat_ids ?? [])
   const addedCount = (request.requested_boat_ids ?? []).filter((boatId) => !previousSet.has(boatId)).length
@@ -129,10 +162,10 @@ export default async function handler(req, res) {
   const changeSummary = changeParts.length > 0 ? changeParts.join(', ') : 'boat list changed'
 
   await Promise.all(
-    (admins ?? []).map(async (admin) => {
-      await sendToMember(admin.member_id, {
+    approverIds.map(async (memberId) => {
+      await sendToMember(memberId, {
         title: 'Race event update request',
-        body: `${requesterName} requested updates for "${title}" (${changeSummary}) ${dateRange}`.trim(),
+        body: `${requesterName} requested updates for "${title}" (${changeSummary}) ${dateRange}. Pending captain validation.`.trim(),
         url: '/',
       })
     }),
