@@ -4167,7 +4167,8 @@ function App() {
             <span />
             <span />
             <span />
-            {canApproveRaceEventRequests && pendingRaceEventRequestCount > 0 ? (
+            {((canApproveRaceEventRequests && pendingRaceEventRequestCount > 0) ||
+              (canApproveCaptainBookingRequests && pendingCaptainBookingRequestCount > 0)) ? (
               <span className="menu-alert-dot" aria-hidden="true" />
             ) : null}
           </button>
@@ -4247,6 +4248,9 @@ function App() {
                     }}
                   >
                     Captain approvals ({pendingCaptainBookingRequestCount})
+                    {pendingCaptainBookingRequestCount > 0 ? (
+                      <span className="menu-item-alert-dot" aria-hidden="true" />
+                    ) : null}
                   </button>
                 ) : null}
                 {isAdmin ? (
@@ -5293,23 +5297,18 @@ function App() {
               <div className="gantt-week">
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
-                ) : scheduleDayGanttGroups.every((group) => group.items.length === 0) ? (
-                  <p className="empty-state">No bookings for the next 7 days.</p>
                 ) : (
                   scheduleDayGanttGroups.map((group) => (
                     <div key={group.date} className="gantt-day">
                       <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
-                      {group.items.length === 0 ? (
-                        <p className="empty-state">No bookings.</p>
-                      ) : (
-                        <div className="gantt-scroll gantt-scroll--day">
-                          <div
-                            className="gantt-grid gantt-grid--day"
-                            style={{
-                              width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
-                              height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
-                            }}
-                          >
+                      <div className="gantt-scroll gantt-scroll--day">
+                        <div
+                          className="gantt-grid gantt-grid--day"
+                          style={{
+                            width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
+                            height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
+                          }}
+                        >
                             <div className="gantt-verticals">
                               {Array.from(
                                 { length: END_HOUR - START_HOUR + 1 },
@@ -5390,9 +5389,8 @@ function App() {
                                 )
                               })}
                             </div>
-                          </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -6638,7 +6636,9 @@ function App() {
                       type="date"
                       value={selectedPermissionUntil}
                       onChange={(event) => setSelectedPermissionUntil(event.target.value)}
-                      placeholder="End date (optional)"
+                      placeholder="Permission valid until (optional)"
+                      title="Permission valid until (optional). Leave empty for no expiry."
+                      aria-label="Permission valid until (optional)"
                     />
                     <button
                       className="button ghost small"
@@ -6685,6 +6685,7 @@ function App() {
                       Remove
                     </button>
                   </div>
+                  <p className="helper">Permission valid until (optional). Leave empty for no expiry.</p>
                   <textarea
                     className="permission-list"
                     readOnly
