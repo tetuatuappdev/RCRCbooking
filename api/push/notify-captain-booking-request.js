@@ -63,15 +63,6 @@ export default async function handler(req, res) {
     return
   }
 
-  const requestIds = Array.isArray(payload.requestIds)
-    ? payload.requestIds.filter((id) => typeof id === 'string')
-    : []
-
-  if (requestIds.length === 0) {
-    res.status(400).json({ error: 'Missing requestIds.' })
-    return
-  }
-
   const { data: member, error: memberError } = await supabaseAdmin
     .from('members')
     .select('id, name')
@@ -80,6 +71,80 @@ export default async function handler(req, res) {
 
   if (memberError || !member) {
     res.status(500).json({ error: memberError?.message || 'Member not found.' })
+    return
+  }
+
+  const decision = payload.decision === 'approved' || payload.decision === 'rejected' ? payload.decision : null
+  if (decision) {
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : null
+    if (!requestId) {
+      res.status(400).json({ error: 'Missing requestId.' })
+      return
+    }
+
+    const { data: adminRow, error: adminError } = await supabaseAdmin
+      .from('admins')
+      .select('member_id')
+      .eq('member_id', member.id)
+      .maybeSingle()
+
+    if (adminError) {
+      res.status(500).json({ error: adminError.message })
+      return
+    }
+
+    const { data: allowRow, error: allowError } = await supabaseAdmin
+      .from('allowed_member')
+      .select('role')
+      .ilike('email', user.email)
+      .maybeSingle()
+
+    if (allowError) {
+      res.status(500).json({ error: allowError.message })
+      return
+    }
+
+    if (!adminRow && allowRow?.role !== 'captain') {
+      res.status(403).json({ error: 'Only captains or admins can send this notification.' })
+      return
+    }
+
+    const { data: request, error: requestError } = await supabaseAdmin
+      .from('captain_booking_requests')
+      .select('id, member_id, status, boats(name)')
+      .eq('id', requestId)
+      .maybeSingle()
+
+    if (requestError || !request) {
+      res.status(500).json({ error: requestError?.message || 'Request not found.' })
+      return
+    }
+
+    if (request.status !== decision) {
+      res.status(409).json({ error: 'Decision does not match current status.' })
+      return
+    }
+
+    const boatName = request.boats?.name || 'Boat'
+    await sendToMember(request.member_id, {
+      title: `Captain booking request ${decision}`,
+      body:
+        decision === 'approved'
+          ? `Your booking request for ${boatName} was approved.`
+          : `Your booking request for ${boatName} was rejected.`,
+      url: '/',
+    })
+
+    res.status(200).json({ ok: true })
+    return
+  }
+
+  const requestIds = Array.isArray(payload.requestIds)
+    ? payload.requestIds.filter((id) => typeof id === 'string')
+    : []
+
+  if (requestIds.length === 0) {
+    res.status(400).json({ error: 'Missing requestIds.' })
     return
   }
 

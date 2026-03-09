@@ -3815,7 +3815,7 @@ function App() {
 
     const accessToken = await getAccessToken()
     if (accessToken) {
-      await fetch('/api/push/notify-captain-booking-decision', {
+      await fetch('/api/push/notify-captain-booking-request', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3857,7 +3857,7 @@ function App() {
 
     const accessToken = await getAccessToken()
     if (accessToken) {
-      await fetch('/api/push/notify-captain-booking-decision', {
+      await fetch('/api/push/notify-captain-booking-request', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
