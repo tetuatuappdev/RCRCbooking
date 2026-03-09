@@ -91,7 +91,7 @@ export default async function handler(req, res) {
   const { data: request, error: requestError } = await supabaseAdmin
     .from('race_event_change_requests')
     .select(
-      'id, race_event_id, requested_by_member_id, previous_boat_ids, requested_boat_ids, status, members(name), race_events(title,start_date,end_date)',
+      'id, race_event_id, requested_by_member_id, previous_boat_ids, requested_boat_ids, status, requested_by_member:members!race_event_change_requests_requested_by_member_id_fkey(name), race_events(title,start_date,end_date)',
     )
     .eq('id', requestId)
     .eq('requested_by_member_id', member.id)
@@ -111,7 +111,7 @@ export default async function handler(req, res) {
 
   const previousSet = new Set(request.previous_boat_ids ?? [])
   const addedCount = (request.requested_boat_ids ?? []).filter((boatId) => !previousSet.has(boatId)).length
-  const requesterName = request.members?.name || 'Coordinator'
+  const requesterName = request.requested_by_member?.name || 'Coordinator'
   const title = request.race_events?.title || 'Race event'
   const dateRange =
     request.race_events?.start_date && request.race_events?.end_date

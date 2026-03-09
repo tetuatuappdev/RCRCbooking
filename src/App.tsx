@@ -166,7 +166,10 @@ type RaceEventChangeRequest = {
   reviewed_at?: string | null
   created_at: string
   updated_at?: string | null
-  members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
+  requested_by_member?:
+    | { name: string; email?: string | null }
+    | { name: string; email?: string | null }[]
+    | null
   race_events?: Pick<RaceEvent, 'id' | 'title' | 'start_date' | 'end_date'> | null
 }
 
@@ -1107,7 +1110,7 @@ function App() {
     let query = supabase
       .from('race_event_change_requests')
       .select(
-        'id, race_event_id, requested_by_member_id, previous_boat_ids, requested_boat_ids, status, review_reason, reviewed_by_member_id, reviewed_at, created_at, updated_at, members(name,email), race_events(id,title,start_date,end_date)',
+        'id, race_event_id, requested_by_member_id, previous_boat_ids, requested_boat_ids, status, review_reason, reviewed_by_member_id, reviewed_at, created_at, updated_at, requested_by_member:members!race_event_change_requests_requested_by_member_id_fkey(name,email), race_events(id,title,start_date,end_date)',
       )
       .order('created_at', { ascending: false })
 
@@ -1127,7 +1130,9 @@ function App() {
     setRaceEventChangeRequests(
       (data ?? []).map((request) => ({
         ...request,
-        members: Array.isArray(request.members) ? request.members[0] ?? null : request.members ?? null,
+        requested_by_member: Array.isArray(request.requested_by_member)
+          ? request.requested_by_member[0] ?? null
+          : request.requested_by_member ?? null,
         race_events: Array.isArray(request.race_events)
           ? request.race_events[0] ?? null
           : request.race_events ?? null,
@@ -4470,7 +4475,7 @@ function App() {
                       <div className="pending-confirmations-panel">
                         {raceEventChangeRequests.map((request) => {
                           const requestedEvent = request.race_events
-                          const requestedBy = getRelatedName(request.members) ?? 'Coordinator'
+                          const requestedBy = getRelatedName(request.requested_by_member) ?? 'Coordinator'
                           const previousSet = new Set(request.previous_boat_ids)
                           const addedBoatIds = request.requested_boat_ids.filter(
                             (boatId) => !previousSet.has(boatId),
