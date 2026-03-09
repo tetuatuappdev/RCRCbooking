@@ -4205,40 +4205,35 @@ function App() {
               </div>
             ) : viewMode === 'raceEvents' ? (
               <div className="access-table">
-                <table className="race-events-table">
-                  <thead>
-                    <tr>
-                      <th>Start</th>
-                      <th>End</th>
-                      <th>Title</th>
-                      <th>Boats</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {raceEvents.map((event) => {
-                      const boatLabels = (event.race_event_boats ?? []).map((link) => {
-                        const boat = Array.isArray(link.boats) ? link.boats[0] ?? null : link.boats ?? null
-                        if (!boat) {
-                          return 'Boat'
-                        }
-                        const shortenedBoatName = abbreviateBoatNameForRaceEvents(boat.name)
-                        return boat.type ? `${boat.type} ${shortenedBoatName}` : shortenedBoatName
-                      })
+                <div className="race-events-list">
+                  {raceEvents.map((event) => {
+                    const boatLabels = (event.race_event_boats ?? []).map((link) => {
+                      const boat = Array.isArray(link.boats) ? link.boats[0] ?? null : link.boats ?? null
+                      if (!boat) {
+                        return 'Boat'
+                      }
+                      const shortenedBoatName = abbreviateBoatNameForRaceEvents(boat.name)
+                      return boat.type ? `${boat.type} ${shortenedBoatName}` : shortenedBoatName
+                    })
 
-                      return (
-                        <tr
-                          key={event.id}
-                          onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
-                        >
-                          <td>{formatDateLabel(event.start_date)}</td>
-                          <td>{formatDateLabel(event.end_date)}</td>
-                          <td>{event.title}</td>
-                          <td>{boatLabels.join(', ')}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                    return (
+                      <button
+                        key={event.id}
+                        type="button"
+                        className="race-event-card"
+                        onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
+                      >
+                        <strong>{event.title}</strong>
+                        <span>
+                          {formatDateLabel(event.start_date)} - {formatDateLabel(event.end_date)}
+                        </span>
+                        <span>
+                          {boatLabels.length > 0 ? boatLabels.join(', ') : 'No boats selected'}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             ) : viewMode === 'readme' ? (
               <div className="page-pad readme-page">
@@ -4969,19 +4964,15 @@ function App() {
       !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
-      viewMode !== 'boats' &&
-      viewMode !== 'access' &&
-      viewMode !== 'groups' &&
-      viewMode !== 'profile' &&
-      viewMode !== 'raceEvents' &&
-      viewMode !== 'riskAssessments' &&
-      viewMode !== 'readme' &&
-      viewMode !== 'pendingConfirmations' &&
-      (viewMode !== 'schedule' || !isSelectedDateInPast)
+      (viewMode === 'schedule' || viewMode === 'templates')
         ? createPortal(
             <button
               className="fab"
               onClick={() => {
+                if (viewMode === 'schedule' && isSelectedDateInPast) {
+                  setError('Cannot create a booking in the past.')
+                  return
+                }
                 skipBackdropClick.current = true
                 setEditingBooking(null)
                 setEditingTemplate(null)
@@ -5152,6 +5143,15 @@ function App() {
                   {editingBooking ? (
                     <p className="helper">{getBookingUsageLabel(editingBooking)}</p>
                   ) : null}
+                  <label className="field">
+                    <span>Date</span>
+                    <input
+                      value={formatDayLabel(
+                        editingBooking ? toDateInputValue(editingBooking.start_time) : selectedDate,
+                      )}
+                      readOnly
+                    />
+                  </label>
                   {isAdmin ? (
                     <label className="field">
                       <span>Member</span>

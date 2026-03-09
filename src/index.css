@@ -451,35 +451,39 @@ body {
   background: rgba(148, 163, 184, 0.12);
 }
 
-.race-events-table {
-  table-layout: fixed;
+.race-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.race-events-table th:nth-child(1),
-.race-events-table td:nth-child(1) {
-  width: 105px;
-}
-
-.race-events-table th:nth-child(2),
-.race-events-table td:nth-child(2) {
-  width: 105px;
-}
-
-.race-events-table th:nth-child(3),
-.race-events-table td:nth-child(3) {
-  width: 150px;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-.race-events-table th:nth-child(4),
-.race-events-table td:nth-child(4) {
-  width: auto;
+.race-event-card {
+  width: 100%;
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  background: white;
+  padding: 12px 14px;
   text-align: left;
-  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.race-event-card strong {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.race-event-card span {
+  font-size: 0.9rem;
+  color: var(--muted);
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.race-event-card:hover {
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .boats-table th {
