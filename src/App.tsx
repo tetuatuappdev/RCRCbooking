@@ -56,6 +56,9 @@ const WIND_CONDITION_OPTIONS = [
   'Light/Moderate Breeze with significant gusting',
 ]
 const INCOMING_TIDE_OPTIONS = ['Yes', 'No']
+const LOADIN_PLAN_ROWS = 9
+const LOADIN_PLAN_COLUMNS = 9
+const LOADIN_PLAN_BLOCKED_CELL = `${LOADIN_PLAN_ROWS - 1}-${Math.floor(LOADIN_PLAN_COLUMNS / 2)}`
 
 type Member = {
   id: string
@@ -570,6 +573,7 @@ function App() {
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
   const [editingRaceEvent, setEditingRaceEvent] = useState<RaceEvent | null>(null)
   const [showRaceEventEditor, setShowRaceEventEditor] = useState(false)
+  const [showLoadinPlanEditor, setShowLoadinPlanEditor] = useState(false)
   const [raceEventReadOnly, setRaceEventReadOnly] = useState(false)
   const [riskAssessmentBooking, setRiskAssessmentBooking] = useState<Booking | null>(null)
   const [editingRiskAssessment, setEditingRiskAssessment] = useState<RiskAssessment | null>(null)
@@ -594,7 +598,9 @@ function App() {
     end_date: getTodayString(),
     driver: '',
     boatIds: [] as string[],
+    loadinPlanCells: [] as string[],
   })
+  const [loadinPlanDraft, setLoadinPlanDraft] = useState<string[]>([])
   const [raceEventBoatSearch, setRaceEventBoatSearch] = useState('')
   const [boatPermissionEntries, setBoatPermissionEntries] = useState<BoatPermissionEntry[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
@@ -652,9 +658,9 @@ function App() {
   const isCoordinator = userRole === 'coordinator'
   const isCaptain = userRole === 'captain'
   const isGuest = userRole === 'guest'
-  const isBookingReadOnlyRole = isGuest || isCaptain
+  const isBookingReadOnlyRole = isGuest
   const canManageAccess = isAdmin || isCoordinator || isCaptain
-  const canManageRaceEvents = isAdmin || isCoordinator
+  const canManageRaceEvents = isAdmin || isCoordinator || isCaptain
   const canApproveRaceEventRequests = isAdmin || isCaptain
   const canManageFleet = isAdmin || isCaptain
   const canApproveCaptainBookingRequests = isAdmin || isCaptain
@@ -689,7 +695,7 @@ function App() {
     )
   }, [currentMember, editingRaceEvent, raceEventChangeRequests])
   const isCoordinatorRaceEventRequestMode = Boolean(
-    !isAdmin && !raceEventReadOnly && editingRaceEvent,
+    isCoordinator && !raceEventReadOnly && editingRaceEvent,
   )
 
   useEffect(() => {
@@ -1228,6 +1234,7 @@ function App() {
 
   const resetRaceEventForm = () => {
     setShowRaceEventEditor(false)
+    setShowLoadinPlanEditor(false)
     setEditingRaceEvent(null)
     setRaceEventReadOnly(false)
     setRaceEventForm({
@@ -1236,7 +1243,9 @@ function App() {
       end_date: getTodayString(),
       driver: '',
       boatIds: [],
+      loadinPlanCells: [],
     })
+    setLoadinPlanDraft([])
     setRaceEventBoatSearch('')
   }
 
@@ -1252,7 +1261,9 @@ function App() {
       end_date: event?.end_date ?? event?.start_date ?? getTodayString(),
       driver: event?.driver ?? '',
       boatIds: (event?.race_event_boats ?? []).map((link) => link.boat_id),
+      loadinPlanCells: [],
     })
+    setLoadinPlanDraft([])
     setRaceEventBoatSearch('')
   }
 
@@ -1604,8 +1615,8 @@ function App() {
   }, [boats, currentMember, isAdmin])
 
   const bookingBoatsSource = useMemo(() => {
-    return isAdmin ? boats : allowedBoats
-  }, [allowedBoats, boats, isAdmin])
+    return isAdmin || isCaptain ? boats : allowedBoats
+  }, [allowedBoats, boats, isAdmin, isCaptain])
 
   const filteredBookingBoats = useMemo(() => {
     if (!boatSearch) {
@@ -2817,7 +2828,7 @@ function App() {
     setStatus(null)
 
     if (isBookingReadOnlyRole) {
-      setError('Guests and captains have read-only booking access.')
+      setError('Guests have read-only booking access.')
       return
     }
 
@@ -2846,11 +2857,11 @@ function App() {
     for (const boatId of selectedBoatIds) {
       const boat = boats.find((item) => item.id === boatId)
       const usage = (boat?.usage_type ?? '').toLowerCase()
-      if (usage === 'restricted') {
+      if (usage === 'restricted' && !isCaptain) {
         window.alert('One of the selected boats is restricted and cannot be booked.')
         return
       }
-      if (usage === 'captains permission' && !isAdmin) {
+      if (usage === 'captains permission' && !isAdmin && !isCaptain) {
         const memberId = currentMember?.id
         if (!hasActiveCaptainPermission(boatId, memberId, selectedDate)) {
           approvalRequiredBoatIds.push(boatId)
@@ -3609,8 +3620,8 @@ function App() {
   }
 
   const handleSaveRaceEvent = async () => {
-    if (!isAdmin && !(isCoordinator && editingRaceEvent)) {
-      setError('Only admins can create race events.')
+    if (!(isAdmin || isCaptain) && !(isCoordinator && editingRaceEvent)) {
+      setError('Only captains or admins can create race events.')
       return
     }
 
@@ -3715,6 +3726,7 @@ function App() {
         .from('race_events')
         .update({
           title,
+          event_date: startDate,
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
@@ -3730,6 +3742,7 @@ function App() {
         .from('race_events')
         .insert({
           title,
+          event_date: startDate,
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
@@ -3797,6 +3810,47 @@ function App() {
     setStatus(editingRaceEvent ? 'Race event updated.' : 'Race event created.')
     await fetchRaceEvents()
     resetRaceEventForm()
+  }
+
+  const handleDeleteRaceEvent = async () => {
+    if (!editingRaceEvent) {
+      return
+    }
+    if (!isAdmin && !isCaptain) {
+      setError('Only captains or admins can delete race events.')
+      return
+    }
+    const confirmed = window.confirm('Delete this race event? This action cannot be undone.')
+    if (!confirmed) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error } = await supabase.from('race_events').delete().eq('id', editingRaceEvent.id)
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus('Race event deleted.')
+    await Promise.all([fetchRaceEvents(), fetchRaceEventChangeRequests()])
+    resetRaceEventForm()
+  }
+
+  const openLoadinPlanEditor = () => {
+    setLoadinPlanDraft(raceEventForm.loadinPlanCells)
+    setShowLoadinPlanEditor(true)
+  }
+
+  const closeLoadinPlanEditor = () => {
+    setShowLoadinPlanEditor(false)
+  }
+
+  const saveLoadinPlanEditor = () => {
+    setRaceEventForm((prev) => ({ ...prev, loadinPlanCells: loadinPlanDraft }))
+    setShowLoadinPlanEditor(false)
   }
 
   const handleApproveRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
@@ -4045,7 +4099,8 @@ function App() {
     }
 
     const requestedRole = accessForm.role
-    const captainAllowed = requestedRole === 'coordinator' || requestedRole === 'guest'
+    const captainAllowed =
+      requestedRole === 'captain' || requestedRole === 'coordinator' || requestedRole === 'guest'
     if (
       (isCoordinator && requestedRole !== 'guest') ||
       (isCaptain && !captainAllowed) ||
@@ -4071,7 +4126,7 @@ function App() {
     setAccessForm({
       email: '',
       name: '',
-      role: isCoordinator ? 'guest' : 'coordinator',
+      role: isCoordinator ? 'guest' : isCaptain ? 'captain' : 'coordinator',
     })
     setShowAccessEditor(false)
     fetchAllowedMembers()
@@ -5314,13 +5369,7 @@ function App() {
                       <tr key={member.id}>
                         <td>{member.name}</td>
                         <td>{member.email}</td>
-                        <td>
-                          {member.role === 'admin'
-                            ? 'Admin'
-                            : member.role === 'guest'
-                              ? 'Guest'
-                              : 'Coordinator'}
-                        </td>
+                        <td>{getRoleLabel(member.role ?? (member.is_admin ? 'admin' : 'coordinator'))}</td>
                         <td>
                           {isAdmin ? (
                             <button
@@ -6589,18 +6638,20 @@ function App() {
         <div className="modal-backdrop" onClick={resetRaceEventForm}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
+              {!raceEventReadOnly && !isCoordinatorRaceEventRequestMode ? (
+                <button className="button ghost" type="button" onClick={openLoadinPlanEditor}>
+                  LOADIN PLAN
+                </button>
+              ) : null}
               <h3>
                 {raceEventReadOnly
                   ? 'View race event'
                   : isCoordinatorRaceEventRequestMode
                     ? 'Request race event boat update'
-                  : editingRaceEvent
+                    : editingRaceEvent
                     ? 'Edit race event'
                     : 'Create race event'}
               </h3>
-              <button className="button ghost" type="button" onClick={resetRaceEventForm}>
-                Close
-              </button>
             </div>
             <div className="form-grid">
               <label className="field">
@@ -6621,7 +6672,17 @@ function App() {
                     value={raceEventForm.start_date}
                     readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
                     onChange={(event) =>
-                      setRaceEventForm((prev) => ({ ...prev, start_date: event.target.value }))
+                      setRaceEventForm((prev) => {
+                        const nextStartDate = event.target.value
+                        return {
+                          ...prev,
+                          start_date: nextStartDate,
+                          end_date:
+                            prev.end_date && prev.end_date < nextStartDate
+                              ? nextStartDate
+                              : prev.end_date,
+                        }
+                      })
                     }
                   />
                 </label>
@@ -6724,6 +6785,11 @@ function App() {
                 </button>
               </div>
             ) : null}
+            {!raceEventReadOnly && editingRaceEvent && (isAdmin || isCaptain) ? (
+              <button className="button ghost danger delete-row" type="button" onClick={handleDeleteRaceEvent}>
+                Delete event
+              </button>
+            ) : null}
             {isCoordinatorRaceEventRequestMode ? (
               <p className="helper">
                 Coordinators can add or remove boats. Title, dates, and driver stay unchanged until
@@ -6737,6 +6803,70 @@ function App() {
         </div>
       ) : null}
 
+      {session && showRaceEventEditor && showLoadinPlanEditor ? (
+        <div className="modal-backdrop" onClick={closeLoadinPlanEditor}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Loadin plan</h3>
+            </div>
+            <div className="loadin-plan-grid" role="grid" aria-label="Loadin plan grid">
+              {Array.from({ length: LOADIN_PLAN_ROWS }, (_, rowIndex) => (
+                <div key={`loadin-row-${rowIndex}`} className="loadin-plan-row" role="row">
+                  {Array.from({ length: LOADIN_PLAN_COLUMNS }, (_, columnIndex) => {
+                    const cellKey = `${rowIndex}-${columnIndex}`
+                    const blocked = cellKey === LOADIN_PLAN_BLOCKED_CELL
+                    const active = loadinPlanDraft.includes(cellKey)
+                    return (
+                      <button
+                        key={cellKey}
+                        className={`loadin-plan-cell${active ? ' selected' : ''}${blocked ? ' blocked' : ''}`}
+                        type="button"
+                        role="gridcell"
+                        aria-pressed={active}
+                        disabled={blocked}
+                        onClick={() => {
+                          setLoadinPlanDraft((prev) =>
+                            prev.includes(cellKey)
+                              ? prev.filter((item) => item !== cellKey)
+                              : [...prev, cellKey],
+                          )
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+            <div className="field">
+              <span>Selected boats</span>
+              {raceEventForm.boatIds.length === 0 ? (
+                <p className="helper">No boats selected for this event.</p>
+              ) : (
+                <div className="loadin-plan-boat-list">
+                  {raceEventForm.boatIds.map((boatId, index) => {
+                    const boat = boats.find((item) => item.id === boatId)
+                    const label = boat ? `${boat.type ? `${boat.type} ` : ''}${boat.name}` : 'Boat'
+                    return (
+                      <div key={`loadin-boat-${boatId}`} className="loadin-plan-boat-item">
+                        {index + 1}. {label}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="button primary" type="button" onClick={saveLoadinPlanEditor}>
+                Save
+              </button>
+              <button className="button ghost" type="button" onClick={closeLoadinPlanEditor}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {session &&
       !showNewBooking &&
       !editingBooking &&
@@ -6744,7 +6874,7 @@ function App() {
       !editingBoat &&
       !showRaceEventEditor &&
       viewMode === 'raceEvents' &&
-      isAdmin
+      (isAdmin || isCaptain)
         ? createPortal(
             <button
               className="fab"
@@ -6997,6 +7127,7 @@ function App() {
                     </>
                   ) : isCaptain ? (
                     <>
+                      <option value="captain">Captain</option>
                       <option value="coordinator">Coordinator</option>
                       <option value="guest">Guest</option>
                     </>
@@ -7127,7 +7258,7 @@ function App() {
                 setAccessForm({
                   email: '',
                   name: '',
-                  role: isCoordinator ? 'guest' : 'coordinator',
+                  role: isCoordinator ? 'guest' : isCaptain ? 'captain' : 'coordinator',
                 })
               }}
               aria-label="New access"

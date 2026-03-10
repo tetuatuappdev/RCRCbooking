@@ -882,6 +882,49 @@ body {
   margin-bottom: 10px;
 }
 
+.loadin-plan-grid {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.loadin-plan-row {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.loadin-plan-cell {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.loadin-plan-cell.selected {
+  background: #bbf7d0;
+  border-color: #16a34a;
+}
+
+.loadin-plan-cell.blocked {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.loadin-plan-boat-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.loadin-plan-boat-item {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
 .selected-boat-row {
   display: flex;
   align-items: center;
