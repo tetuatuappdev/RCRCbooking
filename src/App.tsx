@@ -6207,8 +6207,8 @@ function App() {
               <>
                 <div className="form-grid">
                   {templateBookingDraft ? (
-                    <p className="helper">
-                      Select at least one boat to confirm this generic template booking.
+                    <p className="modal-warning-title">
+                      Please add at least one boat to validate the booking
                     </p>
                   ) : null}
                   {editingBooking ? (

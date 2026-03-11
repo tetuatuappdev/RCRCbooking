@@ -1341,6 +1341,12 @@ select:focus {
   color: var(--ink-3);
 }
 
+.modal-warning-title {
+  margin: 0 0 8px;
+  color: #b91c1c;
+  font-weight: 700;
+}
+
 @media (max-width: 900px) {
   .push-prompt {
     flex-direction: column;
