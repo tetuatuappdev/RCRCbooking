@@ -2745,7 +2745,7 @@ function App() {
       return
     }
 
-    setStatus(`Confirm your email to finish signup: ${normalizedEmail}.`)
+    setStatus(`Confirm your email to finish signup: ${normalizedEmail}. Please also check your spam folder.`)
     setSignupPassword('')
     setSignupConfirm('')
   }
@@ -2790,7 +2790,7 @@ function App() {
       return
     }
 
-    setStatus(`Password reset email sent to ${email}.`)
+    setStatus(`Password reset email sent to ${email}. Please also check your spam folder.`)
   }
 
   const handleSetPassword = async () => {
