@@ -91,6 +91,7 @@ type Booking = {
   end_time: string
   booking_ids?: string[]
   boat_ids?: string[]
+  riskAssessmentAlert?: boolean
   usage_status?: 'scheduled' | 'pending' | 'confirmed' | 'cancelled' | null
   usage_confirmed_at?: string | null
   usage_confirmed_by?: string | null
@@ -260,6 +261,7 @@ type ScheduleItem = {
   template_group_id?: string | null
   template_ids?: string[]
   boat_ids?: string[]
+  riskAssessmentAlert?: boolean
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
@@ -650,6 +652,18 @@ const groupBookings = (rows: Booking[]) => {
 
   return Array.from(groups.values())
 }
+
+const applyRiskAssessmentAlerts = (rows: Booking[], linkedBookingIds: Set<string>) =>
+  rows.map((booking) => {
+    const relatedIds = booking.booking_ids ?? [booking.id]
+    const hasLinkedRiskAssessment = relatedIds.some((id) => linkedBookingIds.has(id))
+    const bookingStart = new Date(booking.start_time).getTime()
+    const hasStarted = !Number.isNaN(bookingStart) && bookingStart <= Date.now()
+    return {
+      ...booking,
+      riskAssessmentAlert: hasStarted && !hasLinkedRiskAssessment,
+    }
+  })
 
 const normalizeTemplateBooking = (
   value: TemplateBooking | TemplateBooking[] | null | undefined,
@@ -1860,7 +1874,7 @@ function App() {
     const dayEnd = new Date(dayStart)
     dayEnd.setDate(dayEnd.getDate() + 1)
 
-    const [{ data: bookingsData }, { data: exceptionsData }] = await Promise.all([
+    const [{ data: bookingsData, error: bookingsError }, { data: exceptionsData, error: exceptionsError }] = await Promise.all([
       supabase
         .from('bookings')
         .select(BOOKING_SELECT)
@@ -1873,7 +1887,35 @@ function App() {
         .eq('exception_date', date),
     ])
 
-    setBookings(groupBookings((bookingsData ?? []) as Booking[]))
+    if (bookingsError) {
+      setError(bookingsError.message)
+      return
+    }
+
+    if (exceptionsError) {
+      setError(exceptionsError.message)
+      return
+    }
+
+    const rawBookings = (bookingsData ?? []) as Booking[]
+    const bookingIds = rawBookings.map((booking) => booking.id)
+    let linkedBookingIds = new Set<string>()
+
+    if (bookingIds.length > 0) {
+      const { data: links, error: linksError } = await supabase
+        .from('booking_risk_assessments')
+        .select('booking_id')
+        .in('booking_id', bookingIds)
+
+      if (linksError) {
+        setError(linksError.message)
+        return
+      }
+
+      linkedBookingIds = new Set((links ?? []).map((link) => link.booking_id))
+    }
+
+    setBookings(applyRiskAssessmentAlerts(groupBookings(rawBookings), linkedBookingIds))
     setTemplateExceptions(exceptionsData ?? [])
   }, [])
 
@@ -2145,7 +2187,25 @@ function App() {
         return
       }
 
-      setBookings(groupBookings((bookingsResult.data ?? []) as Booking[]))
+      const rawBookings = (bookingsResult.data ?? []) as Booking[]
+      const bookingIds = rawBookings.map((booking) => booking.id)
+      let linkedBookingIds = new Set<string>()
+
+      if (bookingIds.length > 0) {
+        const { data: links, error: linksError } = await supabase
+          .from('booking_risk_assessments')
+          .select('booking_id')
+          .in('booking_id', bookingIds)
+
+        if (linksError) {
+          setError(linksError.message)
+          return
+        }
+
+        linkedBookingIds = new Set((links ?? []).map((link) => link.booking_id))
+      }
+
+      setBookings(applyRiskAssessmentAlerts(groupBookings(rawBookings), linkedBookingIds))
       setTemplateBookings(groupTemplates((templatesResult.data ?? []) as TemplateBooking[]))
       setTemplateExceptions(exceptionsResult.data ?? [])
       const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
@@ -2604,14 +2664,10 @@ function App() {
     if (item.pendingApproval) {
       return 'booking-pill booking-pill--approval'
     }
-    const isPastRenderedBooking = !item.isTemplate && isPastBooking(item as Booking)
     const isPendingRenderedBooking = !item.isTemplate && isPendingBooking(item as Booking)
     const isSettledRenderedBooking = !item.isTemplate && isSettledBooking(item as Booking)
     return `booking-pill${item.isTemplate ? ' template' : ''}${
-      (isSettledRenderedBooking || (isPastRenderedBooking && !isPendingRenderedBooking)) &&
-      !isPendingRenderedBooking
-        ? ' booking-pill--past'
-        : ''
+      isSettledRenderedBooking ? ' booking-pill--past' : ''
     }${isPendingRenderedBooking ? ' booking-pill--pending' : ''}`
   }
 
@@ -4276,8 +4332,10 @@ function App() {
       }
     }
 
+    setBookingHasLinkedRiskAssessment(true)
     setStatus(editingRiskAssessment ? 'Risk assessment updated.' : 'Risk assessment created.')
     await fetchRiskAssessments()
+    await refreshScheduleDay(riskAssessmentBooking.start_time.slice(0, 10))
     resetRiskAssessmentForm()
   }
 
@@ -4302,8 +4360,10 @@ function App() {
       return
     }
 
+    setBookingHasLinkedRiskAssessment(true)
     setStatus('Existing risk assessment linked.')
     await fetchRiskAssessments()
+    await refreshScheduleDay(riskAssessmentBooking.start_time.slice(0, 10))
     resetRiskAssessmentForm()
   }
 
@@ -5461,7 +5521,7 @@ function App() {
               viewMode === 'templates' ? 'templates-mode' : 'schedule-mode'
             }`}
           >
-            {viewMode === 'pendingConfirmations' ? (
+            {riskAssessmentBooking ? null : viewMode === 'pendingConfirmations' ? (
               <div className="page-pad">
                 <section className="panel login-panel auth-card single">
                   <div className="auth-form">
@@ -6231,6 +6291,13 @@ function App() {
                                       <strong>{boatName}</strong>
                                       <span>{memberName}</span>
                                     </div>
+                                    {booking.riskAssessmentAlert ? (
+                                      <span
+                                        className="booking-pill-marker"
+                                        title="Risk assessment missing"
+                                        aria-label="Risk assessment missing"
+                                      />
+                                    ) : null}
                                   </button>
                                 )
                               })}
@@ -6244,6 +6311,28 @@ function App() {
               </div>
             ) : viewMode === 'schedule' && scheduleDisplayMode === 'list' ? (
               <div className="booking-list">
+                <div className="schedule-legend">
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch" />
+                    Scheduled Outing
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
+                    Pending confirmation that outing took place
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
+                    Completed Outing
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--template" />
+                    Recurrent booking pending confirmation
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="booking-pill-marker schedule-legend-marker" />
+                    Risk assessment missing after start time
+                  </span>
+                </div>
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
                 ) : (
@@ -6276,6 +6365,13 @@ function App() {
                                         : memberName}
                                     </span>
                                 </div>
+                                {booking.riskAssessmentAlert ? (
+                                  <span
+                                    className="booking-pill-marker"
+                                    title="Risk assessment missing"
+                                    aria-label="Risk assessment missing"
+                                  />
+                                ) : null}
                                 <span className="booking-time">
                                   {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
                                 </span>
@@ -6290,6 +6386,28 @@ function App() {
               </div>
             ) : viewMode === 'schedule' ? (
               <div className="gantt-week">
+                <div className="schedule-legend">
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch" />
+                    Scheduled Outing
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
+                    Pending confirmation that outing took place
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
+                    Completed Outing
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="schedule-legend-swatch schedule-legend-swatch--template" />
+                    Recurrent booking pending confirmation
+                  </span>
+                  <span className="schedule-legend-item">
+                    <span className="booking-pill-marker schedule-legend-marker" />
+                    Risk assessment missing after start time
+                  </span>
+                </div>
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
                 ) : (
@@ -6361,30 +6479,37 @@ function App() {
                                     36,
                                     ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
                                   )
-                                  return (
-                                    <button
-                                      key={booking.id}
-                                      type="button"
-                                      className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
+                                return (
+                                  <button
+                                    key={booking.id}
+                                    type="button"
+                                    className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
                                       style={{
                                         transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
                                         width,
                                       }}
                                       onClick={() => openScheduleItem(booking)}
-                                      disabled={!canOpenScheduleItem(booking)}
-                                      aria-disabled={!canOpenScheduleItem(booking)}
-                                    >
-                                      <div>
-                                        <strong>{boatName}</strong>
-                                        <span>
-                                          {booking.pendingApproval
+                                    disabled={!canOpenScheduleItem(booking)}
+                                    aria-disabled={!canOpenScheduleItem(booking)}
+                                  >
+                                    <div>
+                                      <strong>{boatName}</strong>
+                                      <span>
+                                        {booking.pendingApproval
                                             ? `${memberName} - PENDING`
-                                            : memberName}
-                                        </span>
-                                      </div>
-                                    </button>
-                                  )
-                                })}
+                                          : memberName}
+                                      </span>
+                                    </div>
+                                    {booking.riskAssessmentAlert ? (
+                                      <span
+                                        className="booking-pill-marker"
+                                        title="Risk assessment missing"
+                                        aria-label="Risk assessment missing"
+                                      />
+                                    ) : null}
+                                  </button>
+                                )
+                              })}
                               </div>
                           </div>
                         </div>
@@ -6454,24 +6579,31 @@ function App() {
                             36,
                             ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
                           )
-                          return (
-                            <button
-                              key={booking.id}
-                              type="button"
-                              className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
+                            return (
+                              <button
+                                key={booking.id}
+                                type="button"
+                                className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
                               style={{
                                 transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
                                 width,
                               }}
                               onClick={() => openScheduleItem(booking)}
-                              disabled={!canOpenScheduleItem(booking)}
-                              aria-disabled={!canOpenScheduleItem(booking)}
-                            >
-                              <div>
-                                <strong>{boatName}</strong>
-                                <span>{memberName}</span>
-                              </div>
-                            </button>
+                                disabled={!canOpenScheduleItem(booking)}
+                                aria-disabled={!canOpenScheduleItem(booking)}
+                              >
+                                <div>
+                                  <strong>{boatName}</strong>
+                                  <span>{memberName}</span>
+                                </div>
+                                {booking.riskAssessmentAlert ? (
+                                  <span
+                                    className="booking-pill-marker"
+                                    title="Risk assessment missing"
+                                    aria-label="Risk assessment missing"
+                                  />
+                                ) : null}
+                              </button>
                           )
                         })}
                       </div>
@@ -7094,29 +7226,15 @@ function App() {
                   </p>
                 ) : null}
                 {isEditingBookingLocked && editingBooking ? (
-                  isGuest ? (
+                  canOpenRiskAssessment(editingBooking) || bookingHasLinkedRiskAssessment ? (
                     <button
                       className="button ghost"
                       type="button"
                       onClick={() => openRiskAssessmentEditor(editingBooking)}
-                      disabled={!canOpenRiskAssessment(editingBooking)}
-                      title={
-                        canOpenRiskAssessment(editingBooking)
-                          ? undefined
-                          : getRiskAssessmentAvailabilityMessage(editingBooking)
-                      }
                     >
                       {bookingHasLinkedRiskAssessment
                         ? 'Risk Assessment'
                         : 'Create / Link Risk Assessment'}
-                    </button>
-                  ) : bookingHasLinkedRiskAssessment ? (
-                    <button
-                      className="button ghost"
-                      type="button"
-                      onClick={() => openRiskAssessmentEditor(editingBooking, { readOnly: true })}
-                    >
-                      Risk Assessment
                     </button>
                   ) : null
                 ) : null}

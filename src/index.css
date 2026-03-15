@@ -364,7 +364,7 @@ body {
 }
 
 .gantt-day + .gantt-day {
-  margin-top: 18px;
+  margin-top: 6px;
 }
 
 .gantt-day {
@@ -394,6 +394,63 @@ body {
 
 .booking-list-day + .booking-list-day {
   margin-top: 18px;
+}
+
+.schedule-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-top: -8px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.schedule-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  line-height: 1.1;
+}
+
+.schedule-legend-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(37, 99, 235, 0.55);
+  background: rgba(191, 219, 254, 0.45);
+  flex: 0 0 auto;
+}
+
+.schedule-legend-swatch--pending {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(191, 219, 254, 0.7) 0px,
+      rgba(191, 219, 254, 0.7) 10px,
+      rgba(147, 197, 253, 0.85) 10px,
+      rgba(147, 197, 253, 0.85) 20px
+    );
+  border-color: rgba(37, 99, 235, 0.7);
+}
+
+.schedule-legend-swatch--confirmed {
+  background: rgba(30, 64, 175, 0.82);
+  border-color: rgba(15, 23, 42, 0.9);
+}
+
+.schedule-legend-swatch--template {
+  background: rgba(251, 146, 60, 0.18);
+  border-color: rgba(249, 115, 22, 0.5);
+}
+
+.schedule-legend-marker {
+  margin-left: 0;
+  transform: scale(0.85);
 }
 
 .boats-table {
@@ -1170,8 +1227,15 @@ select:focus {
 }
 
 .booking-pill--pending {
-  background: rgba(191, 219, 254, 0.45);
-  border-color: rgba(37, 99, 235, 0.55);
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(191, 219, 254, 0.7) 0px,
+      rgba(191, 219, 254, 0.7) 10px,
+      rgba(147, 197, 253, 0.85) 10px,
+      rgba(147, 197, 253, 0.85) 20px
+    );
+  border-color: rgba(37, 99, 235, 0.7);
 }
 
 .booking-pill--approval {
@@ -1247,6 +1311,30 @@ select:focus {
 
 .booking-pill strong {
   display: block;
+}
+
+.booking-pill-marker {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border-left: 14px solid transparent;
+  border-right: 14px solid transparent;
+  border-bottom: 24px solid #dc2626;
+  position: relative;
+  align-self: center;
+}
+
+.booking-pill-marker::after {
+  content: '!';
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .booking-pill span {
